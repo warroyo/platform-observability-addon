@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths: ["chart/**"]
   workflow_dispatch: {}
+  workflow_dispatch: {}
 
 permissions:
   contents: write
