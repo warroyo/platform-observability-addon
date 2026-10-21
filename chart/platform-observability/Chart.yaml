@@ -1,0 +1,20 @@
+apiVersion: v2
+name: platform-observability
+description: >-
+  Ships a VKS cluster's metrics, events and logs to VCF Operations Platform
+  Observability (Extensions > Platform Observability). The same install as the
+  VCF Operations "Onboard VKS Cluster" dialog, as one chart.
+type: application
+version: 0.1.0
+# The collector image the VCF Operations values pin.
+appVersion: "0.153.0"
+dependencies:
+  # Two releases of the same chart, as the onboarding dialog installs them.
+  - name: opentelemetry-collector
+    alias: aggregator
+    version: 0.158.1
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  - name: opentelemetry-collector
+    alias: agent
+    version: 0.158.1
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts

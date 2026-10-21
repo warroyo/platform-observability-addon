@@ -1,0 +1,692 @@
+# Per-cluster values. scripts/onboard.sh fills all of these from the VCF
+# Operations API, so nobody copies them out of the onboarding dialog.
+
+# The cluster's name as VCF Operations knows it: the name given to the
+# configurations API, and the cluster_id on every metric and log.
+clusterName: ""
+
+vcfOps:
+  # vmspInstanceFqdn: the VCF services runtime instance gateway. Metrics and
+  # logs go to https://<instanceFqdn>/otel-ingest-service.
+  instanceFqdn: ""
+  # vmspPlatformFqdn: the platform OAuth server. Tokens come from
+  # https://<platformFqdn>/api/v1/identity/token.
+  platformFqdn: ""
+  # vmspInstanceCertificate and vmspPlatformCertificate: the CA chains, as
+  # PEM, exactly as the API returns them.
+  instanceCA: ""
+  platformCA: ""
+  # The cluster's OAuth client, svc-vodap-app0-<cluster> in VCF Operations.
+  clientId: ""
+  clientSecret: ""
+
+# Shared secret between the agents and the aggregators. Leave empty to have
+# the chart generate one and keep it across upgrades.
+internalToken: ""
+
+# Everything below is the VCF Operations values-aggregator.yaml and
+# values-agent.yaml, unchanged except where a comment says "changed".
+# The namespace is fixed: the secrets, the ConfigMap and both collectors
+# must share it.
+
+aggregator:
+  # changed: the namespace and names the onboarding dialog gives the
+  # helm releases otel-aggregator and otel-agent in vcf-monitoring.
+  namespaceOverride: vcf-monitoring
+  fullnameOverride: otel-aggregator-opentelemetry-collector
+
+  mode: deployment
+  replicaCount: 2
+
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.153.0"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+
+  ports:
+    otlp:
+      enabled: true
+    otlp-http:
+      enabled: true
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  presets:
+    clusterMetrics:
+      enabled: false
+    kubernetesEvents:
+      enabled: false
+    kubernetesObjects:
+      enabled: false
+    kubernetesAttributes:
+      enabled: false
+
+  clusterRole:
+    create: true
+    rules:
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["get", "list", "create", "update", "delete", "watch"]
+      - apiGroups: [""]
+        resources: ["endpoints", "resourcequotas", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes", "events", "pods", "nodes", "namespaces", "services"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["apps"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["batch"]
+        resources: ["jobs", "cronjobs"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["autoscaling"]
+        resources: ["horizontalpodautoscalers"]
+        verbs: ["get", "list", "watch"]
+
+  extraEnvs:
+    - name: MY_POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: MY_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: OTEL_GW_OAUTH_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: otel-gateway-oauth-creds
+          key: client-id
+    - name: OTEL_GW_OAUTH_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: otel-gateway-oauth-creds
+          key: client-secret
+    - name: OTEL_INTERNAL_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: otel-internal-auth
+          key: token
+    # changed: the three per-cluster values the dialog writes into the
+    # config come from the ConfigMap this chart renders, so this file stays
+    # the same for every cluster.
+    - name: VCF_OPS_CLUSTER_ID
+      valueFrom:
+        configMapKeyRef:
+          name: platform-observability
+          key: cluster-id
+    - name: VCF_OPS_TOKEN_URL
+      valueFrom:
+        configMapKeyRef:
+          name: platform-observability
+          key: token-url
+    - name: VCF_OPS_INGEST_ENDPOINT
+      valueFrom:
+        configMapKeyRef:
+          name: platform-observability
+          key: ingest-endpoint
+
+  extraVolumes:
+    - name: gateway-tls-ca
+      secret:
+        secretName: otel-gateway-tls-ca
+    - name: oauth-tls-ca
+      secret:
+        secretName: otel-gateway-oauth-tls-ca
+    - name: tmpfs
+      emptyDir: {}
+
+  extraVolumeMounts:
+    - name: gateway-tls-ca
+      mountPath: /etc/otel/certs
+      readOnly: true
+    - name: oauth-tls-ca
+      mountPath: /etc/otel/oauth-certs
+      readOnly: true
+    - name: tmpfs
+      mountPath: /tmp
+
+  resources:
+    limits:
+      cpu: 4000m
+      memory: 4Gi
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+
+  terminationGracePeriodSeconds: 60
+
+  livenessProbe:
+    httpGet:
+      port: 13133
+      path: /
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    failureThreshold: 6
+    timeoutSeconds: 15
+
+  readinessProbe:
+    httpGet:
+      port: 13133
+      path: /
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+
+  alternateConfig:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      k8s_leader_elector:
+        auth_type: serviceAccount
+        lease_name: otel-aggregator-leader
+        lease_namespace: ${env:MY_POD_NAMESPACE}
+        lease_duration: 30s
+        renew_deadline: 20s
+        retry_period: 5s
+      oauth2client/otel-gateway:
+        client_id: "${env:OTEL_GW_OAUTH_CLIENT_ID}"
+        client_secret: "${env:OTEL_GW_OAUTH_CLIENT_SECRET}"
+        # changed: was https://<platform fqdn>/api/v1/identity/token
+        token_url: "${env:VCF_OPS_TOKEN_URL}"
+        timeout: 10s
+        tls:
+          ca_file: /etc/otel/oauth-certs/oauth-ca.crt
+      bearertokenauth/server:
+        token: "${env:OTEL_INTERNAL_TOKEN}"
+
+    receivers:
+      prometheus/internal:
+        config:
+          scrape_configs:
+            - job_name: 'otel-aggregator'
+              scrape_interval: 15s
+              static_configs:
+                - targets: ['0.0.0.0:8888']
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            auth:
+              authenticator: bearertokenauth/server
+          http:
+            endpoint: 0.0.0.0:4318
+            auth:
+              authenticator: bearertokenauth/server
+      k8s_cluster:
+        auth_type: serviceAccount
+        kube_api_qps: 20
+        kube_api_burst: 30
+        collection_interval: 30s
+        k8s_leader_elector: k8s_leader_elector
+        metrics:
+          k8s.pod.phase: { enabled: true }
+        node_conditions_to_report: [Ready]
+        resource_attributes:
+          k8s.namespace.name: { enabled: true }
+          k8s.node.name:      { enabled: true }
+          k8s.node.uid:       { enabled: true }
+          k8s.pod.name:       { enabled: true }
+          k8s.pod.uid:        { enabled: true }
+      k8s_events:
+        auth_type: serviceAccount
+        kube_api_qps: 10
+        kube_api_burst: 20
+        k8s_leader_elector: k8s_leader_elector
+        namespaces: []
+      k8sobjects:
+        auth_type: serviceAccount
+        kube_api_qps: 10
+        kube_api_burst: 20
+        k8s_leader_elector: k8s_leader_elector
+        objects:
+          - { name: nodes,        mode: pull, interval: 5m  }
+          - { name: pods,         mode: pull, interval: 5m  }
+          - { name: pods,         mode: watch }
+          - { name: namespaces,   mode: pull, interval: 10m }
+          - { name: services,     mode: pull, interval: 10m }
+          - { name: deployments,  mode: pull, interval: 7m  }
+          - { name: statefulsets, mode: pull, interval: 7m  }
+          - { name: daemonsets,   mode: pull, interval: 8m  }
+          - { name: replicasets,  mode: pull, interval: 9m  }
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 3500
+        spike_limit_mib: 500
+      batch:
+        send_batch_size: 2048
+        send_batch_max_size: 4096
+        timeout: 1s
+      batch/logs:
+        send_batch_size: 2048
+        send_batch_max_size: 4096
+        timeout: 2s
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.namespace.name
+            - k8s.deployment.name
+            - k8s.node.name
+            - k8s.node.uid
+            - k8s.daemonset.name
+            - k8s.statefulset.name
+            - k8s.cronjob.name
+            - k8s.job.name
+            - k8s.pod.uid
+            - k8s.pod.start_time
+          annotations:
+            - from: node
+              key: cluster.x-k8s.io/cluster-name
+              tag_name: k8s.cluster.name
+          labels:
+            - from: node
+              key: topology.kubernetes.io/zone
+              tag_name: vcenter.cluster.name
+            - from: node
+              key: node.cluster.x-k8s.io/esxi-host
+              tag_name: esxi.host.name
+      transform:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            statements:
+              - set(attributes["app0.service.category"], "http")      where IsMatch(metric.name, "^http\\..*")
+              - set(attributes["app0.service.category"], "rpc")       where IsMatch(metric.name, "^rpc\\..*")
+              - set(attributes["app0.service.category"], "messaging") where IsMatch(metric.name, "^messaging\\..*")
+              - set(attributes["app0.service.category"], "database")  where IsMatch(metric.name, "^(db|sql|redis)\\..*")
+      resource/custom_attributes:
+        attributes:
+          - key: cluster_id
+            # changed: was the cluster name
+            value: "${env:VCF_OPS_CLUSTER_ID}"
+            action: upsert
+
+    exporters:
+      otlphttp/metrics:
+        # changed: was https://<instance fqdn>/otel-ingest-service
+        endpoint: "${env:VCF_OPS_INGEST_ENDPOINT}"
+        tls:
+          insecure: false
+          ca_file: /etc/otel/certs/gateway-ca.crt
+        auth:
+          authenticator: oauth2client/otel-gateway
+        timeout: 30s
+        idle_conn_timeout: 20s
+        retry_on_failure:
+          enabled: true
+          initial_interval: 10s
+          max_interval: 60s
+          max_elapsed_time: 65s
+        sending_queue:
+          enabled: true
+          num_consumers: 8
+          queue_size: 250
+          block_on_overflow: false
+
+      otlphttp/logs:
+        # changed: as otlphttp/metrics
+        endpoint: "${env:VCF_OPS_INGEST_ENDPOINT}"
+        tls:
+          insecure: false
+          ca_file: /etc/otel/certs/gateway-ca.crt
+        auth:
+          authenticator: oauth2client/otel-gateway
+        timeout: 30s
+        idle_conn_timeout: 20s
+        retry_on_failure:
+          enabled: true
+          initial_interval: 10s
+          max_interval: 60s
+          max_elapsed_time: 65s
+        sending_queue:
+          enabled: true
+          num_consumers: 16
+          queue_size: 500
+          block_on_overflow: false
+
+    service:
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: "0.0.0.0"
+                    port: 8888
+      extensions: [health_check, k8s_leader_elector, oauth2client/otel-gateway, bearertokenauth/server]
+      pipelines:
+        metrics:
+          receivers:  [otlp, k8s_cluster]
+          processors: [memory_limiter, k8sattributes, transform, resource/custom_attributes, batch]
+          exporters:  [otlphttp/metrics]
+        metrics/internal:
+          receivers: [prometheus/internal]
+          processors: [memory_limiter, resource/custom_attributes, batch]
+          exporters: [otlphttp/metrics]
+        logs:
+          receivers:  [otlp, k8s_events, k8sobjects]
+          processors: [memory_limiter, k8sattributes, resource/custom_attributes, batch/logs]
+          exporters:  [otlphttp/logs]
+
+agent:
+  # changed: as for the aggregator.
+  namespaceOverride: vcf-monitoring
+  fullnameOverride: otel-agent-opentelemetry-collector
+
+  mode: daemonset
+
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.153.0"
+
+  extraEnvs:
+    - name: MY_POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: OTEL_INTERNAL_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: otel-internal-auth
+          key: token
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: K8S_NODE_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+
+  extraVolumes:
+    - name: varlogpods
+      hostPath:
+        path: /var/log/pods
+    - name: varlibdockercontainers
+      hostPath:
+        path: /var/lib/docker/containers
+    - name: hostfs
+      hostPath:
+        path: /
+
+  extraVolumeMounts:
+    - name: varlogpods
+      mountPath: /var/log/pods
+      readOnly: true
+    - name: varlibdockercontainers
+      mountPath: /var/lib/docker/containers
+      readOnly: true
+    - name: hostfs
+      mountPath: /hostfs
+      readOnly: true
+
+  clusterRole:
+    create: true
+    rules:
+      - apiGroups: [""]
+        resources:
+          - nodes
+          - nodes/proxy
+          - nodes/stats
+          - nodes/metrics
+          - nodes/pods
+          - pods
+        verbs:
+          - get
+          - list
+          - watch
+
+  presets:
+    logsCollection:
+      enabled: false
+    hostMetrics:
+      enabled: false
+    kubeletMetrics:
+      enabled: false
+    kubernetesAttributes:
+      enabled: false
+
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    fsGroup: 0
+    seccompProfile:
+      type: RuntimeDefault
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+  livenessProbe:
+    httpGet:
+      port: 13133
+      path: /
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+
+  readinessProbe:
+    httpGet:
+      port: 13133
+      path: /
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+
+  nodeSelector: {}
+  affinity: {}
+
+  ports:
+    otlp:
+      enabled: false
+    otlp-http:
+      enabled: false
+    metrics:
+      enabled: true
+    jaeger-compact:
+      enabled: false
+    jaeger-grpc:
+      enabled: false
+    jaeger-thrift:
+      enabled: false
+    zipkin:
+      enabled: false
+
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+    - operator: Exists
+      effect: NoExecute
+
+  terminationGracePeriodSeconds: 45
+
+  alternateConfig:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      bearertokenauth/client:
+        token: "${env:OTEL_INTERNAL_TOKEN}"
+
+    receivers:
+      prometheus/internal:
+        config:
+          scrape_configs:
+            - job_name: 'otel-agent'
+              scrape_interval: 15s
+              static_configs:
+                - targets: ['0.0.0.0:8888']
+      filelog:
+        include:
+          - /var/log/pods/*/*/*.log
+        exclude:
+          - /var/log/pods/${env:MY_POD_NAMESPACE}_*/*/*.log
+          - /var/log/pods/kube-system_*/*/*.log
+          - /var/log/pods/kube-node-lease_*/*/*.log
+        include_file_path: true
+        include_file_name: false
+        start_at: end
+        retry_on_failure:
+          enabled: true
+        operators:
+          - type: container
+            id: container-parser
+          - type: json_parser
+            id: try_json_parse
+            parse_from: body
+            if: '(body matches "^\\s*\\{" or body matches "^\\s*\\[\\{") and len(body) > 2'
+            on_error: drop
+
+      hostmetrics:
+        collection_interval: 15s
+        root_path: /hostfs
+        scrapers:
+          cpu: {}
+          disk: {}
+          filesystem:
+            include_mount_points:
+              match_type: strict
+              mount_points:
+                - /hostfs
+                - /hostfs/boot
+                - /hostfs/var
+          load: {}
+          memory: {}
+          network: {}
+
+      kubeletstats:
+        collection_interval: 15s
+        auth_type: serviceAccount
+        endpoint: "${env:K8S_NODE_IP}:10250"
+        insecure_skip_verify: true
+        extra_metadata_labels:
+          - container.id
+        k8s_api_config:
+          auth_type: serviceAccount
+        metric_groups:
+          - node
+          - pod
+          - container
+        node: "${env:K8S_NODE_NAME}"
+        metrics:
+          container.cpu.usage:          { enabled: true }
+          container.uptime:             { enabled: true }
+          k8s.container.cpu.node.utilization:    { enabled: true }
+          k8s.container.cpu_limit_utilization:   { enabled: true }
+          k8s.container.cpu_request_utilization: { enabled: true }
+          k8s.container.memory_limit_utilization:   { enabled: true }
+          k8s.container.memory_request_utilization: { enabled: true }
+          k8s.node.cpu.usage:           { enabled: true }
+          k8s.node.uptime:              { enabled: true }
+          k8s.pod.cpu.node.utilization: { enabled: true }
+          k8s.pod.cpu.usage:            { enabled: true }
+          k8s.pod.cpu_limit_utilization:    { enabled: true }
+          k8s.pod.cpu_request_utilization:  { enabled: true }
+          k8s.pod.memory_limit_utilization: { enabled: true }
+          k8s.pod.memory_request_utilization: { enabled: true }
+          k8s.pod.uptime:               { enabled: true }
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 850
+        spike_limit_mib: 150
+      batch:
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+        timeout: 1s
+      resourcedetection:
+        detectors: [env, system]
+        timeout: 2s
+        override: false
+      transform:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - set(severity_text, "TRACE") where IsString(body) and IsMatch(body, "(?i).*\\bTRACE\\b.*")
+              - set(severity_text, "DEBUG") where IsString(body) and IsMatch(body, "(?i).*\\bDEBUG\\b.*")
+              - set(severity_text, "INFO")  where IsString(body) and IsMatch(body, "(?i).*\\b(INFO|INFORMATION|NOTICE)\\b.*")
+              - set(severity_text, "WARN")  where IsString(body) and IsMatch(body, "(?i).*\\b(WARN|WARNING)\\b.*")
+              - set(severity_text, "ERROR") where IsString(body) and IsMatch(body, "(?i).*\\b(ERROR|ERR)\\b.*")
+              - set(severity_text, "FATAL") where IsString(body) and IsMatch(body, "(?i).*\\b(FATAL|CRITICAL|PANIC|SEVERE)\\b.*")
+              - set(severity_number, 1)  where severity_text == "TRACE"
+              - set(severity_number, 5)  where severity_text == "DEBUG"
+              - set(severity_number, 9)  where severity_text == "INFO"
+              - set(severity_number, 13) where severity_text == "WARN"
+              - set(severity_number, 17) where severity_text == "ERROR"
+              - set(severity_number, 24) where severity_text == "FATAL"
+              - set(severity_text, "DEBUG")   where severity_text == nil or severity_text == ""
+              - set(severity_number, 5) where (severity_number == 0 or severity_number == nil) and (severity_text == "DEBUG" or severity_text == nil or severity_text == "")
+
+    exporters:
+      otlphttp:
+        endpoint: "http://otel-aggregator-opentelemetry-collector:4318"
+        auth:
+          authenticator: bearertokenauth/client
+        timeout: 10s
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 200
+
+    service:
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: "0.0.0.0"
+                    port: 8888
+      extensions: [health_check, bearertokenauth/client]
+      pipelines:
+        metrics:
+          receivers: [hostmetrics, kubeletstats]
+          processors: [memory_limiter, resourcedetection, batch]
+          exporters: [otlphttp]
+        metrics/internal:
+          receivers: [prometheus/internal]
+          processors: [memory_limiter, batch]
+          exporters: [otlphttp]
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, transform, batch]
+          exporters: [otlphttp]

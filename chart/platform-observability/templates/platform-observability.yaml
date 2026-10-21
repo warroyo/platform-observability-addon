@@ -1,0 +1,75 @@
+{{- /*
+What the onboarding dialog's kubectl steps create, before the two helm
+releases: the namespace, the two CA secrets, the OAuth client secret and the
+internal token secret. Plus the ConfigMap the aggregator reads its
+per-cluster endpoints from.
+*/ -}}
+{{- $ns := .Values.aggregator.namespaceOverride -}}
+{{- $clusterName := required "clusterName is required" .Values.clusterName -}}
+{{- $ops := .Values.vcfOps -}}
+{{- $token := .Values.internalToken -}}
+{{- if not $token -}}
+{{- /* Keep the generated token across upgrades, or every upgrade would
+       restart the agents and aggregators out of step. */ -}}
+{{- $existing := lookup "v1" "Secret" $ns "otel-internal-auth" -}}
+{{- if $existing -}}
+{{- $token = index $existing.data "token" | b64dec -}}
+{{- else -}}
+{{- $token = randAlphaNum 48 -}}
+{{- end -}}
+{{- end -}}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    # The agent mounts host paths and runs as root.
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-observability
+  namespace: {{ $ns }}
+data:
+  cluster-id: {{ $clusterName | quote }}
+  token-url: {{ printf "https://%s/api/v1/identity/token" (required "vcfOps.platformFqdn is required" $ops.platformFqdn) | quote }}
+  ingest-endpoint: {{ printf "https://%s/otel-ingest-service" (required "vcfOps.instanceFqdn is required" $ops.instanceFqdn) | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otel-gateway-tls-ca
+  namespace: {{ $ns }}
+type: Opaque
+data:
+  gateway-ca.crt: {{ required "vcfOps.instanceCA is required" $ops.instanceCA | b64enc }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otel-gateway-oauth-tls-ca
+  namespace: {{ $ns }}
+type: Opaque
+data:
+  oauth-ca.crt: {{ required "vcfOps.platformCA is required" $ops.platformCA | b64enc }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otel-gateway-oauth-creds
+  namespace: {{ $ns }}
+type: Opaque
+stringData:
+  client-id: {{ required "vcfOps.clientId is required" $ops.clientId | quote }}
+  client-secret: {{ required "vcfOps.clientSecret is required" $ops.clientSecret | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otel-internal-auth
+  namespace: {{ $ns }}
+type: Opaque
+stringData:
+  token: {{ $token | quote }}

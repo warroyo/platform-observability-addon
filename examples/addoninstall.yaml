@@ -1,0 +1,28 @@
+# Attach the addon to every cluster in this Supervisor namespace that carries
+# the label addons.kubernetes.vmware.com/platform-observability=enabled.
+#
+# Each matched cluster also needs its AddonConfig, which carries its VCF
+# Operations credentials: run scripts/onboard.sh for it. A cluster without one
+# gets the chart with empty values, and the install fails on the first
+# required value.
+#
+# The chart is a helm addon, so the cluster also needs the helm-controller
+# addon: label it addon.addons.kubernetes.vmware.com/helm-controller=managed
+# if it does not have helm-controller already.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonInstall
+metadata:
+  name: platform-observability-addoninstall
+  namespace: my-namespace
+spec:
+  addonRef:
+    name: platform-observability
+  clusters:
+    - selector:
+        matchLabels:
+          addons.kubernetes.vmware.com/platform-observability: enabled
+  releaseFilter:
+    ref:
+      name: platform-observability.0.1.0
+  crossNamespaceSelection: Blocked
+  stopMatchingBehavior: Delete

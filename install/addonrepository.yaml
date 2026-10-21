@@ -1,0 +1,38 @@
+# A Supervisor administrator applies this once. The VKS addon manager reads
+# the chart from the helm repository and creates the Addon
+# platform-observability, an AddonRelease for each version in addonFilters, and
+# a generated AddonConfigDefinition with helmValues and helmOptions.
+#
+# After the AddonRepositoryInstall exists, the webhook allows only
+# spec.addonFilters to change. To offer a new chart version, add it to
+# addonFilters (and keep the old one while clusters still use it).
+#
+# The package-offerings annotation is required, and it cannot change after
+# install, so it lists no versions.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonRepository
+metadata:
+  name: platform-observability-repo
+  namespace: vmware-system-vks-public
+  annotations:
+    addons.kubernetes.vmware.com/package-offerings: |
+      {"repositoryVersion":"1.0.0","packages":{"platform-observability":{"versions":[]}}}
+spec:
+  fetch:
+    helmRepository:
+      url: https://warroyo.github.io/platform-observability-addon
+  addonFilters:
+    - name: platform-observability
+      versions: ["0.1.0"]
+  targetRepositoryName: platform-observability-repo
+  version: "1.0.0"
+---
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonRepositoryInstall
+metadata:
+  name: platform-observability-repo-install
+  namespace: vmware-system-vks-public
+spec:
+  addonRepositoryRef:
+    name: platform-observability-repo
+    namespace: vmware-system-vks-public

@@ -1,0 +1,35 @@
+# Publishes the chart as a helm repository on GitHub Pages, which is what the
+# AddonRepository fetches. A push to main that bumps the version in
+# chart/platform-observability/Chart.yaml releases that version. A version that
+# is already released is skipped, never overwritten.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths: ["chart/**"]
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+      - uses: azure/setup-helm@v4
+      - name: Add the opentelemetry repository for the dependencies
+        run: helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+      - uses: helm/chart-releaser-action@v1.7.0
+        with:
+          charts_dir: chart
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CR_SKIP_EXISTING: "true"
