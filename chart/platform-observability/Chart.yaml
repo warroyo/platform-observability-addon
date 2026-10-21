@@ -5,6 +5,10 @@ description: >-
   Observability (Extensions > Platform Observability). The same install as the
   VCF Operations "Onboard VKS Cluster" dialog, as one chart.
 type: application
+home: https://github.com/warroyo/platform-observability-addon
+sources:
+  - https://github.com/warroyo/platform-observability-addon
+  - https://github.com/open-telemetry/opentelemetry-helm-charts
 version: 0.1.0
 # The collector image the VCF Operations values pin.
 appVersion: "0.153.0"
