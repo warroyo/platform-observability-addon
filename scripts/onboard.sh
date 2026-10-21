@@ -154,7 +154,6 @@ jq -n --argjson c "$(jq '.[0]' <<<"$config")" \
     }
   },
   spec: {
-    clusterName: $cluster,
     values: {
       helmValues: {
         clusterName: $cluster,
