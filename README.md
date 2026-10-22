@@ -138,9 +138,14 @@ and `commands`. Step 5 of `commands` holds the new secret. `onboard.sh` sends
 the POST, takes the secret from step 5, and uses the GET for the rest.
 
 `DELETE /suite-api/internal/extension/vodap/app0/configurations/<cluster>`
-removes a cluster from the list. Tested as `admin` only, on a cluster whose
-VSP client was already deleted, so it is not known whether it also deletes
-the client. VSP deletes a client with
+offboards a cluster: it removes the cluster from the list and deletes its
+OAuth client (`svc-vodap-app0-<cluster>`) in VSP, so the cluster's collectors
+stop getting tokens. The onboarding account can do it; it needs no more than
+`extensions.management.usage`. `DELETE configurations?clusterName=<cluster>`
+answers 405.
+
+A VSP client left behind without an Ops entry, for example one made directly
+in VSP, is deleted in VSP with
 `DELETE /api/v1/identity/service-accounts?componentType=vcf-obs-data-platform&componentId=<id>&clientId=<url-encoded saClientId>`
 as `admin@vsp.local`. A client ID in the path answers 307, and `clientName`
 answers 400.
