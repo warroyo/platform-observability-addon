@@ -40,7 +40,8 @@
 #
 # Environment:
 #   VCF_OPS_URL            required, e.g. https://ops.example.com
-#   VCF_OPS_USERNAME       default admin
+#   VCF_OPS_USERNAME       default admin; use platform-observability-onboard,
+#                          the restricted user scripts/ops-account.sh creates
 #   VCF_OPS_PASSWORD       required in print mode
 #   VSP_URL                default https://<vmspPlatformFqdn>; required in
 #                          --check mode, e.g. https://vsp.example.com
