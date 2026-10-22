@@ -158,7 +158,20 @@ new one, and a new one revokes the old one at once. Opening the onboarding
 dialog for a cluster issues a new one, and that cluster's aggregators then
 get 401s until they have it.
 
-So `onboard.sh` records on the AddonConfig when the secret it carries was
+**Do not open the "Onboard VKS Cluster" dialog for a cluster this addon
+manages.** Entering the cluster's name there is the same `POST
+configurations` that `onboard.sh` sends: it revokes the secret in the
+cluster's AddonConfig at once, and nothing tells the addon. Rotate a
+cluster's secret with `onboard.sh` instead, and offboard it with `DELETE
+configurations/<cluster>`, not from the dialog. If the dialog was opened
+anyway, the sign is 401s in the aggregator logs; run `onboard.sh` for that
+cluster and apply its output.
+
+`--check` below is for a person looking into a cluster. It logs in to VSP as
+`admin@vsp.local`, so automation should not depend on it: the onboarding
+account alone onboards, rotates and offboards.
+
+`onboard.sh` records on the AddonConfig when the secret it carries was
 issued (`platform-observability/secret-rotated-at`, from VSP's
 `lastSecretRotationDate`), and `onboard.sh <cluster> <ns> --check` compares
 that with VSP without touching the secret. It exits 3 when the secret was
