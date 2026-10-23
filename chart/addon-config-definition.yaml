@@ -1,0 +1,150 @@
+# The addon's AddonConfigDefinition. VKS 3.8 and later read it from the
+# addons.kubernetes.vmware.com/addon-config-definition annotation in
+# Chart.yaml (gzip and base64), instead of generating one with only
+# helmValues and helmOptions. scripts/embed-acd.sh writes the annotation and
+# sets metadata.name from the chart version; run it after editing this file
+# or the version.
+#
+# What it adds to the generated one: it reads the Secret
+# platform-observability-<cluster>, which the onboarder writes in the
+# cluster's namespace, and renders its credentials into the chart values. So
+# the OAuth secret is never in an AddonConfig.
+#
+# Order of precedence for the credentials:
+#   1. the Secret, when it exists;
+#   2. helmValues.vcfOps in the AddonConfig, as chart 0.1.0 had them (an
+#      onboarder with legacy_addon_config, or scripts/onboard.sh);
+#   3. neither: enabled false, and the chart installs nothing until the
+#      Secret appears.
+#
+# The template is Go text/template with sprig, evaluated per cluster by the
+# addon controller. Use only functions shipped ACDs already use (a missing one
+# is a parse error that fails every cluster). onboarder/acd_test.go renders it.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonConfigDefinition
+metadata:
+  name: platform-observability.VERSION
+  namespace: vmware-system-vks-public
+spec:
+  schema:
+    openAPIV3Schema:
+      type: object
+      properties:
+        helmOptions:
+          description: Configuration for the HelmRelease resource
+          type: object
+          properties:
+            targetNamespace:
+              description: The target namespace in the guest cluster where the Helm chart will be installed
+              type: string
+              default: default
+        helmValues:
+          description: >-
+            Helm values for the chart. Leave out clusterName and vcfOps: they
+            come from the Secret platform-observability-<cluster>.
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+  templateInputResources:
+    # Written by the onboarder. Optional: a cluster labelled before it is
+    # onboarded renders with enabled false, and renders again when the Secret
+    # appears.
+    - inputName: opsCredentials
+      apiVersion: v1
+      kind: Secret
+      name: 'platform-observability-{{.Cluster.name}}'
+      scope: Namespace
+      constraints:
+        - operator: optional
+  templateOutputResources:
+    - targetClusterOutput:
+        apiVersion: v1
+        kind: Secret
+        name: '{{.Cluster.name}}-{{.Addon.name}}-values'
+        namespace: vmware-system-helm
+        referenceType: ValuesRef
+        scope: Namespace
+      template: |-
+        {{- /* Nested ifs, never and: before Go 1.18, and evaluated every
+               argument, so a guard did not stop the index after it. */ -}}
+        {{- $values := dict -}}
+        {{- if .Values -}}
+        {{-   if index .Values "helmValues" -}}
+        {{-     $values = index .Values "helmValues" -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- $fromSecret := false -}}
+        {{- if .Dependencies -}}
+        {{-   if hasKey .Dependencies "opsCredentials" -}}
+        {{-     $fromSecret = true -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- if $fromSecret -}}
+        {{-   $s := index .Dependencies "opsCredentials" -}}
+        {{-   $d := index $s "data" -}}
+        {{-   $ops := dict -}}
+        {{-   if hasKey $d "clientId" }}{{ $_ := set $ops "clientId" (index $d "clientId" | b64dec) }}{{ end -}}
+        {{-   if hasKey $d "clientSecret" }}{{ $_ := set $ops "clientSecret" (index $d "clientSecret" | b64dec) }}{{ end -}}
+        {{-   if hasKey $d "instanceFqdn" }}{{ $_ := set $ops "instanceFqdn" (index $d "instanceFqdn" | b64dec) }}{{ end -}}
+        {{-   if hasKey $d "platformFqdn" }}{{ $_ := set $ops "platformFqdn" (index $d "platformFqdn" | b64dec) }}{{ end -}}
+        {{-   if hasKey $d "instanceCA" }}{{ $_ := set $ops "instanceCA" (index $d "instanceCA" | b64dec) }}{{ end -}}
+        {{-   if hasKey $d "platformCA" }}{{ $_ := set $ops "platformCA" (index $d "platformCA" | b64dec) }}{{ end -}}
+        {{-   $_ := set $values "vcfOps" $ops -}}
+        {{-   $aggregator := dict -}}
+        {{-   if hasKey $values "aggregator" -}}
+        {{-     $aggregator = index $values "aggregator" -}}
+        {{-   end -}}
+        {{-   $podAnnotations := dict -}}
+        {{-   if hasKey $aggregator "podAnnotations" -}}
+        {{-     $podAnnotations = index $aggregator "podAnnotations" -}}
+        {{-   end -}}
+        {{-   $meta := index $s "metadata" -}}
+        {{-   if hasKey $meta "annotations" -}}
+        {{-     if hasKey (index $meta "annotations") "platform-observability/secret-hash" -}}
+        {{-       $_ := set $podAnnotations "platform-observability/secret-hash" (index $meta "annotations" "platform-observability/secret-hash") -}}
+        {{-     end -}}
+        {{-   end -}}
+        {{-   $_ := set $aggregator "podAnnotations" $podAnnotations -}}
+        {{-   $_ := set $values "aggregator" $aggregator -}}
+        {{- else -}}
+        {{-   $legacySecret := "" -}}
+        {{-   if hasKey $values "vcfOps" -}}
+        {{-     if hasKey (index $values "vcfOps") "clientSecret" -}}
+        {{-       $legacySecret = index $values "vcfOps" "clientSecret" -}}
+        {{-     end -}}
+        {{-   end -}}
+        {{-   if not $legacySecret -}}
+        {{-     $_ := set $values "enabled" false -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- if not (hasKey $values "clusterName") -}}
+        {{-   $_ := set $values "clusterName" .Cluster.name -}}
+        {{- end -}}
+        stringData:
+          values.yaml: |
+        {{ $values | toYaml | indent 4 }}
+    # The same as the generated ACD: helm-controller reads the HelmRelease
+    # options from this ConfigMap.
+    - supervisorNamespaceOutput:
+        apiVersion: v1
+        kind: ConfigMap
+        name: '{{.Cluster.name}}-{{.Addon.name}}-options'
+        referenceType: Direct
+      template: |-
+        data:
+        {{- if .Values }}
+        {{- if index .Values "helmOptions" }}
+        {{ index .Values "helmOptions" | toYaml | indent 2 }}
+        {{- end }}
+        {{- end }}
+  addonInstallPermission:
+    accessPolicies:
+      - rules:
+          # The options ConfigMap, as in the builtin helm addons' ACDs.
+          - apiGroups: [""]
+            resources: ["configmaps"]
+            verbs: ["get", "create", "update", "patch"]
+          # The credentials Secret input, as telegraf's ACD grants for its
+          # Secret inputs.
+          - apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch"]

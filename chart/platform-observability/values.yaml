@@ -1,5 +1,12 @@
-# Per-cluster values. scripts/onboard.sh fills all of these from the VCF
-# Operations API, so nobody copies them out of the onboarding dialog.
+# Per-cluster values. As an addon, the AddonConfigDefinition fills all of
+# these from the Secret platform-observability-<cluster> that the onboarder
+# writes (chart/addon-config-definition.yaml). For a plain helm install,
+# scripts/onboard.sh prints them from the VCF Operations API, so nobody copies
+# them out of the onboarding dialog.
+
+# false installs nothing. The AddonConfigDefinition sets it for a cluster
+# that is labelled but not onboarded yet.
+enabled: true
 
 # The cluster's name as VCF Operations knows it: the name given to the
 # configurations API, and the cluster_id on every metric and log.
