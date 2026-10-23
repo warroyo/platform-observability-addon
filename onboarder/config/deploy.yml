@@ -203,6 +203,12 @@ metadata:
   name: #@ data.values.addon_name + "-oci-repo"
   namespace: #@ data.values.namespace
   annotations:
+    #! The webhook refuses to delete an AddonRepository while an
+    #! AddonRepositoryInstall uses it, and kapp deletes in no set order. So a
+    #! later rename deletes the install first. kapp reads these from the
+    #! objects it deletes, so they only help pairs created with them.
+    kapp.k14s.io/change-group: addon-repository
+    kapp.k14s.io/change-rule: delete after deleting addon-repository-install
     #! repositoryVersion 2.0.0, not the Pages repository's 1.0.0: the
     #! AddonRepositoryInstall webhook refuses a second registration whose
     #! offerings equal an existing one's, as a duplicate.
@@ -246,6 +252,8 @@ kind: AddonRepositoryInstall
 metadata:
   name: #@ data.values.addon_name + "-oci-repo-install"
   namespace: #@ data.values.namespace
+  annotations:
+    kapp.k14s.io/change-group: addon-repository-install
 spec:
   addonRepositoryRef:
     name: #@ data.values.addon_name + "-oci-repo"

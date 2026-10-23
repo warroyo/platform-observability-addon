@@ -1,6 +1,6 @@
 # platform-observability addon
 
-[![onboarder](https://github.com/warroyo/platform-observability-addon/actions/workflows/onboarder.yaml/badge.svg)](https://github.com/warroyo/platform-observability-addon/actions/workflows/onboarder.yaml) [![release](https://github.com/warroyo/platform-observability-addon/actions/workflows/release.yaml/badge.svg)](https://github.com/warroyo/platform-observability-addon/actions/workflows/release.yaml) [![chart](https://img.shields.io/github/v/release/warroyo/platform-observability-addon?filter=platform-observability-*&sort=semver&label=chart)](https://github.com/warroyo/platform-observability-addon/releases)
+[![onboarder](https://github.com/warroyo/platform-observability-addon/actions/workflows/onboarder.yaml/badge.svg)](https://github.com/warroyo/platform-observability-addon/actions/workflows/onboarder.yaml) [![release](https://github.com/warroyo/platform-observability-addon/actions/workflows/release.yaml/badge.svg)](https://github.com/warroyo/platform-observability-addon/actions/workflows/release.yaml) [![onboarder release](https://img.shields.io/github/v/release/warroyo/platform-observability-addon?filter=onboarder-v*&sort=semver&label=onboarder)](https://github.com/warroyo/platform-observability-addon/releases) [![chart](https://img.shields.io/github/v/release/warroyo/platform-observability-addon?filter=platform-observability-*&sort=semver&label=chart)](https://github.com/warroyo/platform-observability-addon/releases)
 
 ## Overview
 
@@ -29,6 +29,9 @@ flowchart LR
   Secret `platform-observability-<cluster>` in the cluster's Supervisor
   namespace. It logs in with a restricted Ops account and needs no VSP
   credential.
+- The chart is an OCI artifact on GitHub Packages,
+  `oci://ghcr.io/warroyo/platform-observability-addon/charts/platform-observability`.
+  The service registers it with the VKS addon manager as a helm AddonRepository.
 - The chart ships its own AddonConfigDefinition. It reads that Secret and
   renders the credentials into the chart values.
 - The service ships one AddonInstall that attaches the addon to labelled
@@ -90,9 +93,9 @@ the [FAQ](docs/faq.md).
 ## Repo structure
 
 ```text
-chart/platform-observability/   umbrella chart: namespace, secrets, aggregator and agent
+chart/platform-observability/   umbrella chart (published to ghcr.io by CI): namespace, secrets, aggregator and agent
 chart/addon-config-definition.yaml   source of the chart's AddonConfigDefinition
-install/addonrepository.yaml    AddonRepository and install for registering the addon by hand
+install/addonrepository.yaml    AddonRepository and install (OCI) for registering the addon by hand
 examples/addoninstall.yaml      AddonInstall for one Supervisor namespace
 onboarder/                      the onboarder Supervisor Service (Go)
 scripts/onboard.sh              manual onboarding of one cluster

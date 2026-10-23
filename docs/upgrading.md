@@ -28,6 +28,41 @@ own labels and annotations to the AddonRepositoryInstall, kapp removed them on
 upgrade, and the webhook refused that: `only addon manager service account is
 allowed to modify VKS-managed labels/annotations`.
 
+## Moving the chart repository
+
+On 2026-10-23 the chart moved from GitHub Pages to
+`oci://ghcr.io/warroyo/platform-observability-addon/charts`. An installed
+AddonRepository's URL can't change, so the service registers new objects,
+`platform-observability-oci-repo` and `platform-observability-oci-repo-install`.
+They replace `platform-observability-repo` and `-repo-install`.
+
+- The `package-offerings` repositoryVersion is 2.0.0, not 1.0.0. The
+  AddonRepositoryInstall webhook refuses a registration whose offerings equal an
+  existing one's, as a duplicate.
+- On the upgrade, kapp deleted the old AddonRepository before its
+  AddonRepositoryInstall. The webhook refused with `AddonRepository is in use by
+  an AddonRepositoryInstall, delete is not allowed`, and the service went to
+  ERROR.
+- Recovery: in the service namespace, delete the old AddonRepositoryInstall,
+  then the old AddonRepository. kapp then reconciled.
+- The new pair carries kapp `change-group` and `change-rule` annotations, so a
+  future rename deletes the install first. kapp reads them from the objects it
+  deletes, so they only help pairs created with them.
+
+During the swap the clusters stayed Ready and moved to 0.3.1 from the OCI
+repository. The HelmRelease shows `platform-observability@0.3.1+<digest>`,
+because helm-controller appends the OCI digest. The credentials Secrets were
+unchanged, the aggregators did not restart, and there were no errors.
+
+The upgrade command:
+
+```sh
+VALUES_PATCH='.addon_chart_repository = "oci://ghcr.io/warroyo/platform-observability-addon/charts" | .addon_versions = ["0.3.1"] | .addon_release = "platform-observability.0.3.1"' make install-supervisor-service
+```
+
+If you registered the addon by hand, apply the new `install/addonrepository.yaml`
+and delete the old pair, the install first.
+
 ## History
 
 The move from chart 0.1.0 to 0.2.0, which took the credentials from the
