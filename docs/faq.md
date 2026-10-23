@@ -59,3 +59,18 @@ certificates or endpoints change; restart the collectors then.
 
 It is generated on first install and kept across upgrades (helm `lookup`). Set
 `internalToken` to choose it.
+
+## Why does the onboarder release fail with `permission_denied: write_package`?
+
+The image or bundle package was first created by a push with a personal token,
+so the workflow has no access to it. In the package's settings, go to "Manage
+Actions access", add this repository, and give it the Write role. See
+[Development](development.md#package-access-for-actions).
+
+## Why does the service go to ERROR with `AddonRepository is in use by an AddonRepositoryInstall`?
+
+The service renamed or replaced its AddonRepository. kapp deleted the
+AddonRepository before its AddonRepositoryInstall, and the webhook refuses
+that: `delete is not allowed`. In the service namespace, delete the old
+AddonRepositoryInstall, then the old AddonRepository. kapp then reconciles. See
+[Upgrading](upgrading.md#moving-the-chart-repository).

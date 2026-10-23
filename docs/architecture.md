@@ -37,7 +37,13 @@
 - `examples/addoninstall.yaml`: attaches the addon to labelled clusters in a
   Supervisor namespace.
 
-The chart is published to GitHub Pages by `.github/workflows/release.yaml`.
+The chart is published as an OCI artifact on GitHub Packages by
+`.github/workflows/release.yaml`:
+`oci://ghcr.io/warroyo/platform-observability-addon/charts/platform-observability`.
+The AddonRepository points at `oci://ghcr.io/warroyo/platform-observability-addon/charts`,
+and the addon manager appends the chart name. The onboarder service registers
+it as `platform-observability-oci-repo` and
+`platform-observability-oci-repo-install`, in its own namespace.
 
 The custom ACD needs VKS 3.8 or later. On 3.8 a helm AddonRepositoryInstall in
 a Supervisor Service namespace also propagates to guests, which it did not

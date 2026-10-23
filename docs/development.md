@@ -52,12 +52,27 @@ service lands only through vCenter's service-install API.
 - Onboarder: a tag `onboarder-v<version>` makes `.github/workflows/onboarder.yaml`
   build and push the image and the bundle, and attach
   `platform-observability-onboarder.yml` to a GitHub release.
-- Chart: a push to `main` that bumps the version in
-  `chart/platform-observability/Chart.yaml` makes
-  `.github/workflows/release.yaml` publish it to GitHub Pages with
-  chart-releaser. That also creates a GitHub release tagged
-  `platform-observability-<version>`. A version already released is skipped,
-  never overwritten.
+- Chart: a push to `main` that changes `chart/**` makes
+  `.github/workflows/release.yaml` check the embedded ACD, then run
+  `helm package` and `helm push` to
+  `oci://ghcr.io/warroyo/platform-observability-addon/charts` with
+  `GITHUB_TOKEN`. It then creates a GitHub release tagged
+  `platform-observability-<version>`, which the chart badge reads. A version
+  already published is skipped, never overwritten. To bump the chart, change
+  the version in `Chart.yaml` and run `scripts/embed-acd.sh`. You can also run
+  the workflow by hand from the Actions tab (`workflow_dispatch`). It does
+  nothing for a version that is already published.
+
+## Package access for Actions
+
+A GitHub Package created by a push with a personal token is not linked to the
+workflow. The workflow then fails with
+`denied: permission_denied: write_package`. This happened to the onboarder
+image and bundle, which were first pushed from a laptop. Fix it once per
+package: open the package's settings, go to "Manage Actions access", add this
+repository, and give it the Write role. Packages the workflow creates itself
+need no change. Also keep each package public, so the addon manager and
+clusters pull without credentials.
 
 ## Embedding the ACD
 

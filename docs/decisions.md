@@ -8,13 +8,14 @@ Context: the collectors are the upstream `opentelemetry-collector` helm chart,
 installed twice, and the addon has to be installable on VKS clusters by label.
 
 Decision: ship the addon as a helm chart in a helm AddonRepository, published
-to GitHub Pages, instead of a Carvel package repository.
+as a chart (first to GitHub Pages, since [moved to OCI](#chart-on-oci-in-github-packages-not-a-github-pages-helm-repository)),
+instead of a Carvel package repository.
 
 Alternatives rejected: a Carvel package repository. A Carvel (imgpkg)
 repository was the only way to ship a hand-written ACD before VKS 3.8, but it
 means packaging, a bundle per release, and an AddonRepository that is frozen
 once installed. The collectors are already helm charts, and a helm repository
-on GitHub Pages is simpler to release. VKS 3.8 lets a helm chart carry its own
+is simpler to release. VKS 3.8 lets a helm chart carry its own
 ACD, which removed the one reason to use Carvel.
 
 ## Credentials in a Secret read by a custom ACD, not in an AddonConfig
@@ -124,3 +125,27 @@ Alternatives rejected: keeping the legacy mode. Every cluster had moved, and
 the mode kept the OAuth secret readable and editable in AddonConfigs, kept
 AddonConfig RBAC and code paths in the onboarder, and made the chart accept two
 sources of credentials. Dropping it leaves one source, the Secret.
+
+## Chart on OCI in GitHub Packages, not a GitHub Pages helm repository
+
+Date: 2026-10-23.
+
+Context: the chart was published to GitHub Pages with chart-releaser, and the
+AddonRepository fetched it over `https://`. VKS 3.8 helm AddonRepositories
+also accept `oci://`, and the builtin VKS 3.8 helm repository uses one. The
+onboarder image and bundle already lived on ghcr.io.
+
+Decision: publish the chart with `helm push` to
+`oci://ghcr.io/warroyo/platform-observability-addon/charts`, and register the
+AddonRepository with that URL. The package is public, so pulls are anonymous.
+GitHub Pages is no longer used. The release workflow skips a version that is
+already published, and creates a GitHub release
+`platform-observability-<version>` for the README badge.
+
+Alternatives rejected: GitHub Pages with chart-releaser. It needs a `gh-pages`
+branch and an `index.yaml` that the release job rewrites, and the chart lived
+apart from the onboarder image and bundle on ghcr.io. With OCI, all three
+artifacts are packages of this repo, released by one token (`GITHUB_TOKEN`).
+
+Moving an installed registration needs new object names. See
+[Upgrading](upgrading.md#moving-the-chart-repository).
