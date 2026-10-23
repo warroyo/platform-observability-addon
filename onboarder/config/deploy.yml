@@ -217,6 +217,29 @@ spec:
   targetRepositoryName: #@ data.values.addon_name + "-repo"
   version: "1.0.0"
 ---
+#! The addon manager adds its own labels and annotations to the
+#! AddonRepository and AddonRepositoryInstall, and its webhook refuses any
+#! other client that changes them. Without this, kapp removes them on every
+#! service upgrade and the upgrade fails:
+#!   only addon manager service account is allowed to modify VKS-managed
+#!   labels/annotations
+#! So kapp keeps whatever the cluster already has for these keys.
+apiVersion: kapp.k14s.io/v1alpha1
+kind: Config
+rebaseRules:
+- paths:
+  - [metadata, labels, addons.kubernetes.vmware.com/helm]
+  - [metadata, labels, addons.kubernetes.vmware.com/pkgr-type]
+  - [metadata, labels, kubernetes.vmware.com/managed-by]
+  - [metadata, annotations, addons.kubernetes.vmware.com/addon-repository-version]
+  - [metadata, annotations, addons.kubernetes.vmware.com/target-repository-name]
+  - [metadata, annotations, kubernetes.vmware.com/managed-by]
+  type: copy
+  sources: [new, existing]
+  resourceMatchers:
+  - apiVersionKindMatcher: {apiVersion: addons.kubernetes.vmware.com/v1alpha1, kind: AddonRepository}
+  - apiVersionKindMatcher: {apiVersion: addons.kubernetes.vmware.com/v1alpha1, kind: AddonRepositoryInstall}
+---
 apiVersion: addons.kubernetes.vmware.com/v1alpha1
 kind: AddonRepositoryInstall
 metadata:

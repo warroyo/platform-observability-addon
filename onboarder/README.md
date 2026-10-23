@@ -105,20 +105,36 @@ anyone who can read AddonConfigs in the namespace.
 
 ## Upgrade from chart 0.1.0
 
-This path moves clusters to chart 0.2.0 without rotating any secret. The
-end-to-end upgrade on a live Supervisor has not been run yet, so it is untested
-there.
+This path moves clusters to chart 0.2.0 without rotating any secret. It was run
+on a VKS 3.8 Supervisor on 2026-10-23 with two clusters: both Secrets came out
+with the same secret hash as before, the aggregators did not restart, and they
+exported with no 401s.
 
 1. Upgrade the onboarder service with `legacy_addon_config: true` and
    `addon_versions` including `0.2.0`. It writes each cluster's Secret from the
    AddonConfig values it already has, with no `POST`, and keeps the AddonConfig
    keys.
-2. Move clusters to 0.2.0. They move on their own if the AddonInstall has no
-   `releaseFilter`. Otherwise change `addon_release`. The 0.2.0
-   AddonConfigDefinition also reads legacy AddonConfig values, so the order of
-   steps 1 and 2 does not matter.
+2. Set `addon_release: platform-observability.0.2.0`. A ClusterAddon does not
+   move to a newer AddonRelease by itself, even with no `releaseFilter`: it
+   stays on the release it was installed with and reports `UpgradePending`
+   False. The 0.2.0 AddonConfigDefinition also reads legacy AddonConfig values,
+   so the order of steps 1 and 2 does not matter.
 3. Set `legacy_addon_config: false`. The onboarder removes the credentials from
-   the AddonConfigs.
+   the AddonConfigs, and the clusters keep running from the Secrets.
+
+`test/install-supervisor-service.sh` keeps the installed values on an upgrade.
+Change one with `VALUES_PATCH`, a yq expression:
+
+```sh
+VALUES_PATCH='.legacy_addon_config = false' make install-supervisor-service
+```
+
+Services installed before 0.2.0 can't be upgraded until the service carries
+the kapp rebase rule in `config/deploy.yml`. The addon manager adds its own
+labels and annotations to the AddonRepositoryInstall, kapp removed them on
+upgrade, and the webhook refused that:
+`only addon manager service account is allowed to modify VKS-managed
+labels/annotations`.
 
 ## Never issue a secret it doesn't have to
 
