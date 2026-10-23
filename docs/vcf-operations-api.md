@@ -89,6 +89,23 @@ Two API details `ops-account.sh` handles: a user created through
 `PUT /users/<id>/enable` answers 405, so it sends the whole user back with
 `PUT /suite-api/api/auth/users` and `enabled: true`.
 
+## Example: list onboarded clusters
+
+This gets a token and lists the onboarded clusters. The password goes in
+through a file and stdin, so it is not on a command line. Use `-k` only for a
+self-signed lab Ops.
+
+```sh
+ops=https://ops.example.com
+tok=$(jq -n --arg u platform-observability-onboard --rawfile p ~/.config/vcf-ops/onboard.password \
+  '{username: $u, password: ($p | rtrimstr("\n"))}' \
+  | curl -sk -X POST "$ops/suite-api/api/auth/token/acquire" \
+      -H 'Content-Type: application/json' -H 'Accept: application/json' -d @- | jq -r .token)
+curl -sk "$ops/suite-api/internal/extension/vodap/app0/configurations" \
+  -H "Authorization: OpsToken $tok" -H 'Accept: application/json' \
+  -H 'X-vRealizeOps-API-use-unsupported: true' | jq -r '.[].clusterName'
+```
+
 ## The secret rotates whenever it is fetched
 
 A cluster keeps the same OAuth client (`svc-vodap-app0-<cluster>` in the VSP
