@@ -45,7 +45,6 @@ spec:
         - #@ "--addon-name=" + data.values.addon_name
         - #@ "--sync-period=" + data.values.sync_period
         - #@ "--max-concurrent=" + str(data.values.max_concurrent)
-        - #@ "--legacy-addon-config=" + ("true" if data.values.legacy_addon_config else "false")
         envFrom:
         - secretRef:
             name: platform-observability-onboarder-ops
@@ -96,7 +95,7 @@ metadata:
   name: platform-observability-onboarder
   namespace: #@ data.values.namespace
 ---
-#! Cluster-wide: Clusters, AddonConfigs and the credentials Secrets live in
+#! Cluster-wide: Clusters and the credentials Secrets live in
 #! every tenant namespace. Secrets get no list or watch: the Supervisor refuses
 #! a cluster-wide Secret list or watch to a third-party service account, so the
 #! controller reads each Secret by name.
@@ -109,10 +108,6 @@ rules:
   resources: ["clusters"]
   #! patch: the finalizer and the rotate annotation.
   verbs: ["get", "list", "watch", "patch"]
-- apiGroups: ["addons.kubernetes.vmware.com"]
-  resources: ["addonconfigs"]
-  #! patch: server-side apply of the controller's own keys.
-  verbs: ["get", "list", "watch", "create", "patch"]
 - apiGroups: [""]
   resources: ["secrets"]
   #! platform-observability-<cluster>: patch and create for server-side apply,

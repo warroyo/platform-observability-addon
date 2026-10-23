@@ -3,24 +3,13 @@ package main
 // The reconciler onboards labelled VKS clusters to VCF Operations Platform
 // Observability and keeps the cluster's OAuth client in the Secret
 // platform-observability-<cluster>, in the cluster's namespace. The addon's
-// AddonConfigDefinition (chart 0.2.0 and later) reads that Secret as a
-// template input, so the credentials never sit in an AddonConfig.
-//
-// Chart 0.1.0 read them from the AddonConfig instead. For clusters still on
-// it, --legacy-addon-config also writes these AddonConfig keys, through
-// server-side apply so Argo CD (or anyone) can own the rest:
-//
-//	spec.values.helmValues.clusterName
-//	spec.values.helmValues.vcfOps.*
-//	spec.values.helmValues.aggregator.podAnnotations["platform-observability/secret-hash"]
-//
-// Without it, the reconciler adopts credentials it finds there into the
-// Secret, then removes them from the AddonConfig.
+// AddonConfigDefinition reads that Secret as a template input. The
+// reconciler never touches AddonConfigs.
 //
 // A POST to Ops issues a new secret and revokes the old one at once, and the
 // collectors only pick a new secret up on helm-controller's next interval (up
-// to 10 minutes). So the reconciler POSTs only when neither the Secret nor the
-// AddonConfig has a secret yet, or the Cluster asks for a rotation, and it
+// to 10 minutes). So the reconciler POSTs only when the Secret has no secret
+// yet, or the Cluster asks for a rotation, and it
 // decides that from live reads, never from a cache: a stale cache would POST
 // again right after a successful onboarding and cut the cluster off. Secrets
 // are never cached at all: the Supervisor refuses a cluster-wide Secret watch
@@ -64,17 +53,14 @@ const (
 	// the Cluster's annotation fails.
 	rotatedForAnnotation = "platform-observability/rotated-for"
 	// On the credentials Secret, and from there on the aggregator pods, so a
-	// new secret rolls them. Also the legacy AddonConfig's pod annotation.
+	// new secret rolls them.
 	secretHashAnnotation = "platform-observability/secret-hash"
-	// The addon system garbage-collects the AddonConfig with the ClusterAddon.
-	ownedForDeletionAnnotation = "clusteraddon.addons.kubernetes.vmware.com/owned-for-deletion"
-	managedByLabel             = "app.kubernetes.io/managed-by"
+	managedByLabel       = "app.kubernetes.io/managed-by"
 )
 
 var (
-	clusterGVK     = schema.GroupVersionKind{Group: "cluster.x-k8s.io", Version: "v1beta2", Kind: "Cluster"}
-	addonConfigGVK = schema.GroupVersionKind{Group: "addons.kubernetes.vmware.com", Version: "v1alpha1", Kind: "AddonConfig"}
-	secretGVK      = schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+	clusterGVK = schema.GroupVersionKind{Group: "cluster.x-k8s.io", Version: "v1beta2", Kind: "Cluster"}
+	secretGVK  = schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
 )
 
 // The credentials Secret's keys. The AddonConfigDefinition in
@@ -98,9 +84,6 @@ type Reconciler struct {
 	Recorder     events.EventRecorder
 	AddonName    string
 	FieldManager string
-	// Also write the credentials into the AddonConfig, for clusters still on
-	// chart 0.1.0. Off: remove them from it.
-	LegacyAddonConfig bool
 
 	// Ops keys a cluster on its bare name, so two clusters with the same name
 	// in different namespaces share one OAuth client. Reconciles of the same
@@ -112,8 +95,6 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) enabledLabel() string { return "addons.kubernetes.vmware.com/" + r.AddonName }
-
-func (r *Reconciler) addonConfigName(cluster string) string { return cluster + "-" + r.AddonName }
 
 func (r *Reconciler) secretName(cluster string) string { return r.AddonName + "-" + cluster }
 
@@ -127,12 +108,6 @@ func (r *Reconciler) lockName(name string) func() {
 func newCluster() *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(clusterGVK)
-	return u
-}
-
-func newAddonConfig() *unstructured.Unstructured {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(addonConfigGVK)
 	return u
 }
 
@@ -190,7 +165,7 @@ func (r *Reconciler) onboard(ctx context.Context, cluster *unstructured.Unstruct
 	}
 	// 3. A finished rotation's marker goes, so the same value can ask again.
 	if !rotate && cur.hasMarker && cur.values.ClientSecret != "" {
-		return r.writeValues(ctx, cluster, cur, cur.values, nil)
+		return r.writeSecret(ctx, cluster, cur.values, nil)
 	}
 
 	// 4. Only the cluster holding the finalizer owns the name in Ops. Check
@@ -205,10 +180,9 @@ func (r *Reconciler) onboard(ctx context.Context, cluster *unstructured.Unstruct
 		}
 	}
 
-	// 5. Already onboarded, by us, by an earlier version into the AddonConfig,
-	// or by scripts/onboard.sh: keep the same values. No POST, so nothing
-	// rotates. A resync over hundreds of clusters writes nothing once they
-	// are ours.
+	// 5. Already onboarded, by us or by scripts/onboard.sh: keep the same
+	// values. No POST, so nothing rotates. A resync over hundreds of clusters
+	// writes nothing once they are ours.
 	if cur.values.ClientSecret != "" && !rotate {
 		if cur.values.ClientID == "" {
 			r.Recorder.Eventf(cluster, nil, corev1.EventTypeWarning, "IncompleteCredentials", "Onboard",
@@ -218,15 +192,18 @@ func (r *Reconciler) onboard(ctx context.Context, cluster *unstructured.Unstruct
 		if err := r.ensureFinalizer(ctx, cluster); err != nil {
 			return err
 		}
+		if cur.secretOwned {
+			return nil
+		}
 		v := cur.values
-		if !cur.secretOwned && (v.InstanceFqdn == "" || v.PlatformFqdn == "" || v.InstanceCA == "" || v.PlatformCA == "") {
+		if v.InstanceFqdn == "" || v.PlatformFqdn == "" || v.InstanceCA == "" || v.PlatformCA == "" {
 			ep, err := r.Ops.Endpoints(ctx)
 			if err != nil {
 				return fmt.Errorf("endpoints for %s: %w", cluster.GetName(), err)
 			}
 			v.Endpoints = ep
 		}
-		return r.writeValues(ctx, cluster, cur, v, nil)
+		return r.writeSecret(ctx, cluster, v, nil)
 	}
 
 	// 6. Issue a secret. The finalizer goes on first, so a cluster deleted
@@ -270,15 +247,16 @@ func (r *Reconciler) settlePending(ctx context.Context, cluster *unstructured.Un
 		p.values.Endpoints = ep
 		r.pending.Store(cluster.GetUID(), p)
 	}
-	var marker *string
-	if p.rotation {
-		marker = &p.request
-	}
-	if !cur.secretExists || cur.values.ClientSecret != p.values.ClientSecret {
-		cur.secretOwned = false
-	}
-	if err := r.writeValues(ctx, cluster, cur, p.values, marker); err != nil {
-		return err
+	// Written again for a rotation even when a live read shows the secret
+	// there: the write also carries the marker.
+	if cur.values.ClientSecret != p.values.ClientSecret || !cur.secretOwned || p.rotation {
+		var marker *string
+		if p.rotation {
+			marker = &p.request
+		}
+		if err := r.writeSecret(ctx, cluster, p.values, marker); err != nil {
+			return err
+		}
 	}
 	r.pending.Delete(cluster.GetUID())
 
@@ -302,14 +280,10 @@ func (r *Reconciler) offboard(ctx context.Context, cluster *unstructured.Unstruc
 		return nil
 	}
 	r.pending.Delete(cluster.GetUID())
-	// Credentials out of the Secret and the AddonConfig before the client
-	// goes in Ops: if the cluster is labelled again in between, it finds no
-	// secret and onboards again, instead of adopting one Ops has already
-	// deleted.
+	// The Secret goes before the client goes in Ops: if the cluster is
+	// labelled again in between, it finds no secret and onboards again,
+	// instead of adopting one Ops has already deleted.
 	if err := r.deleteSecret(ctx, cluster); err != nil {
-		return err
-	}
-	if err := r.removeAddonConfigValues(ctx, cluster); err != nil {
 		return err
 	}
 	if _, skip := cluster.GetAnnotations()[skipOffboardAnnotation]; !skip {
@@ -340,62 +314,56 @@ func (r *Reconciler) deleteSecret(ctx context.Context, cluster *unstructured.Uns
 	return nil
 }
 
-// removeAddonConfigValues drops the credentials from the AddonConfig. An apply
-// with none of our fields releases what only we own; values another manager
-// also owns (an adopted onboard.sh AddonConfig) are then removed by path,
-// leaving every other key alone. It writes nothing when there is nothing of
-// ours or of the credentials there.
-func (r *Reconciler) removeAddonConfigValues(ctx context.Context, cluster *unstructured.Unstructured) error {
-	key := types.NamespacedName{Namespace: cluster.GetNamespace(), Name: r.addonConfigName(cluster.GetName())}
-	ac := newAddonConfig()
-	if err := r.APIReader.Get(ctx, key, ac); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	if !r.appliedBy(ac) && !hasCredentials(ac) {
-		return nil
-	}
-	empty := newAddonConfig()
-	empty.SetNamespace(key.Namespace)
-	empty.SetName(key.Name)
-	// The AddonConfig is often garbage collected right now, with its
-	// ClusterAddon, when the cluster stops matching the AddonInstall. An apply
-	// creates a missing object (resourceVersion does not stop it), so one that
-	// lands after the collection either fails or makes an empty AddonConfig,
-	// told apart from the one read by its UID, and deleted again.
-	uid := ac.GetUID()
-	applyErr := r.Client.Apply(ctx, client.ApplyConfigurationFromUnstructured(empty),
-		client.FieldOwner(r.FieldManager), client.ForceOwnership)
-	if err := r.APIReader.Get(ctx, key, ac); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	if created := ac.GetUID(); created != uid {
-		err := r.Client.Delete(ctx, ac, client.Preconditions{UID: &created})
-		return client.IgnoreNotFound(err)
-	}
-	if applyErr != nil {
-		return fmt.Errorf("release AddonConfig %s: %w", key, applyErr)
-	}
-	var ops []string
-	if _, found, _ := unstructured.NestedFieldNoCopy(ac.Object, "spec", "values", "helmValues", "vcfOps"); found {
-		ops = append(ops, `{"op":"remove","path":"/spec/values/helmValues/vcfOps"}`)
-	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(ac.Object, "spec", "values", "helmValues", "aggregator", "podAnnotations", secretHashAnnotation); found {
-		ops = append(ops, `{"op":"remove","path":"/spec/values/helmValues/aggregator/podAnnotations/platform-observability~1secret-hash"}`)
-	}
-	if len(ops) == 0 {
-		return nil
-	}
-	patch := client.RawPatch(types.JSONPatchType, []byte("["+strings.Join(ops, ",")+"]"))
-	if err := r.Client.Patch(ctx, ac, patch); err != nil {
-		return fmt.Errorf("remove credentials from AddonConfig %s: %w", key, err)
-	}
-	return nil
+// opsValues is one cluster's credentials and the shared endpoints.
+type opsValues struct {
+	Credentials
+	Endpoints
 }
 
-func hasCredentials(ac *unstructured.Unstructured) bool {
-	_, ops, _ := unstructured.NestedFieldNoCopy(ac.Object, "spec", "values", "helmValues", "vcfOps")
-	_, hash, _ := unstructured.NestedFieldNoCopy(ac.Object, "spec", "values", "helmValues", "aggregator", "podAnnotations", secretHashAnnotation)
-	return ops || hash
+func (v opsValues) complete() bool {
+	return v.ClientID != "" && v.ClientSecret != "" &&
+		v.InstanceFqdn != "" && v.PlatformFqdn != "" && v.InstanceCA != "" && v.PlatformCA != ""
+}
+
+// current is what the cluster's Secret holds now.
+type current struct {
+	// The credentials and endpoints, possibly none.
+	values opsValues
+	// The Secret already holds exactly what writeSecret would write, under
+	// our field manager.
+	secretOwned bool
+	// The rotate request whose new secret the Secret carries, while the
+	// rotation is finishing.
+	rotatedFor string
+	hasMarker  bool
+}
+
+// currentValues reads the cluster's Secret live.
+func (r *Reconciler) currentValues(ctx context.Context, cluster *unstructured.Unstructured) (current, error) {
+	s := newSecret()
+	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: cluster.GetNamespace(), Name: r.secretName(cluster.GetName())}, s)
+	if apierrors.IsNotFound(err) {
+		return current{}, nil
+	}
+	if err != nil {
+		return current{}, err
+	}
+	data, _, _ := unstructured.NestedStringMap(s.Object, "data")
+	get := func(k string) string {
+		b, _ := base64.StdEncoding.DecodeString(data[k])
+		return string(b)
+	}
+	cur := current{values: opsValues{
+		Credentials: Credentials{ClientID: get(keyClientID), ClientSecret: get(keyClientSecret)},
+		Endpoints: Endpoints{
+			InstanceFqdn: get(keyInstanceFqdn), PlatformFqdn: get(keyPlatformFqdn),
+			InstanceCA: get(keyInstanceCA), PlatformCA: get(keyPlatformCA),
+		},
+	}}
+	cur.rotatedFor, cur.hasMarker = s.GetAnnotations()[rotatedForAnnotation]
+	cur.secretOwned = cur.values.complete() && r.appliedBy(s) &&
+		s.GetAnnotations()[secretHashAnnotation] == secretHash(cur.values.ClientSecret)
+	return cur, nil
 }
 
 // appliedBy: our field manager has applied to this object.
@@ -408,131 +376,9 @@ func (r *Reconciler) appliedBy(u *unstructured.Unstructured) bool {
 	return false
 }
 
-// opsValues is one cluster's credentials and the shared endpoints.
-type opsValues struct {
-	Credentials
-	Endpoints
-}
-
-func (v opsValues) complete() bool {
-	return v.ClientID != "" && v.ClientSecret != "" &&
-		v.InstanceFqdn != "" && v.PlatformFqdn != "" && v.InstanceCA != "" && v.PlatformCA != ""
-}
-
-// current is what the cluster's Secret and AddonConfig hold now.
-type current struct {
-	// The credentials and endpoints, from the Secret if it exists, else from
-	// the AddonConfig; possibly none.
-	values       opsValues
-	secretExists bool
-	// The Secret already holds exactly what writeSecret would write, under
-	// our field manager.
-	secretOwned bool
-	// The rotate request whose new secret the Secret carries, while the
-	// rotation is finishing.
-	rotatedFor string
-	hasMarker  bool
-	// The AddonConfig: whether it holds credentials (or an earlier version's
-	// rotation marker), and whether it holds exactly what writeAddonConfig would write.
-	addonConfigTouched bool
-	addonConfigOwned   bool
-}
-
-// currentValues reads the cluster's Secret and AddonConfig live.
-func (r *Reconciler) currentValues(ctx context.Context, cluster *unstructured.Unstructured) (current, error) {
-	var cur current
-
-	s := newSecret()
-	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: cluster.GetNamespace(), Name: r.secretName(cluster.GetName())}, s)
-	switch {
-	case apierrors.IsNotFound(err):
-	case err != nil:
-		return current{}, err
-	default:
-		data, _, _ := unstructured.NestedStringMap(s.Object, "data")
-		get := func(k string) string {
-			b, _ := base64.StdEncoding.DecodeString(data[k])
-			return string(b)
-		}
-		cur.secretExists = true
-		cur.values = opsValues{
-			Credentials: Credentials{ClientID: get(keyClientID), ClientSecret: get(keyClientSecret)},
-			Endpoints: Endpoints{
-				InstanceFqdn: get(keyInstanceFqdn), PlatformFqdn: get(keyPlatformFqdn),
-				InstanceCA: get(keyInstanceCA), PlatformCA: get(keyPlatformCA),
-			},
-		}
-		cur.rotatedFor, cur.hasMarker = s.GetAnnotations()[rotatedForAnnotation]
-		cur.secretOwned = cur.values.complete() && r.appliedBy(s) &&
-			s.GetAnnotations()[secretHashAnnotation] == secretHash(cur.values.ClientSecret)
-	}
-
-	ac := newAddonConfig()
-	err = r.APIReader.Get(ctx, types.NamespacedName{Namespace: cluster.GetNamespace(), Name: r.addonConfigName(cluster.GetName())}, ac)
-	if apierrors.IsNotFound(err) {
-		return cur, nil
-	}
-	if err != nil {
-		return current{}, err
-	}
-	get := func(field string) string {
-		s, _, _ := unstructured.NestedString(ac.Object, "spec", "values", "helmValues", "vcfOps", field)
-		return s
-	}
-	legacy := opsValues{
-		Credentials: Credentials{ClientID: get("clientId"), ClientSecret: get("clientSecret")},
-		Endpoints: Endpoints{
-			InstanceFqdn: get("instanceFqdn"), PlatformFqdn: get("platformFqdn"),
-			InstanceCA: get("instanceCA"), PlatformCA: get("platformCA"),
-		},
-	}
-	if !cur.secretExists {
-		cur.values = legacy
-	}
-	_, legacyMarker := ac.GetAnnotations()[rotatedForAnnotation]
-	cur.addonConfigTouched = hasCredentials(ac) || legacyMarker
-	cur.addonConfigOwned = r.addonConfigAsWanted(ac, cluster.GetName(), legacy) && legacy == cur.values
-	return cur, nil
-}
-
-// addonConfigAsWanted: our field manager has applied to this AddonConfig, and
-// the fields we write already hold what we would write.
-func (r *Reconciler) addonConfigAsWanted(ac *unstructured.Unstructured, cluster string, v opsValues) bool {
-	if !r.appliedBy(ac) || !v.complete() {
-		return false
-	}
-	_, hasMarker := ac.GetAnnotations()[rotatedForAnnotation]
-	name, _, _ := unstructured.NestedString(ac.Object, "spec", "values", "helmValues", "clusterName")
-	hash, _, _ := unstructured.NestedString(ac.Object, "spec", "values", "helmValues", "aggregator", "podAnnotations", secretHashAnnotation)
-	return name == cluster && hash == secretHash(v.ClientSecret) && !hasMarker &&
-		ac.GetAnnotations()[ownedForDeletionAnnotation] == "true"
-}
-
 func secretHash(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])[:16]
-}
-
-// writeValues makes the Secret hold v, then brings the AddonConfig in line:
-// the same values with --legacy-addon-config, none without. Each write is
-// skipped when the live read shows it would change nothing, so a resync writes
-// nothing.
-// rotatedFor, when set, records which rotate request this secret answers, in
-// the same write as the secret. nil drops a marker an earlier write set.
-func (r *Reconciler) writeValues(ctx context.Context, cluster *unstructured.Unstructured, cur current, v opsValues, rotatedFor *string) error {
-	if !cur.secretOwned || cur.hasMarker || rotatedFor != nil {
-		if err := r.writeSecret(ctx, cluster, v, rotatedFor); err != nil {
-			return err
-		}
-		cur.addonConfigOwned = false
-	}
-	switch {
-	case r.LegacyAddonConfig && !cur.addonConfigOwned:
-		return r.writeAddonConfig(ctx, cluster, v)
-	case !r.LegacyAddonConfig && cur.addonConfigTouched:
-		return r.removeAddonConfigValues(ctx, cluster)
-	}
-	return nil
 }
 
 // writeSecret server-side applies the whole credentials Secret, with force.
@@ -559,38 +405,6 @@ func (r *Reconciler) writeSecret(ctx context.Context, cluster *unstructured.Unst
 	if err := r.Client.Apply(ctx, client.ApplyConfigurationFromUnstructured(s),
 		client.FieldOwner(r.FieldManager), client.ForceOwnership); err != nil {
 		return fmt.Errorf("apply Secret %s/%s: %w", s.GetNamespace(), s.GetName(), err)
-	}
-	return nil
-}
-
-// writeAddonConfig server-side applies our keys, and only ours, with force:
-// the reconciler always takes its own keys back. For chart 0.1.0 only.
-func (r *Reconciler) writeAddonConfig(ctx context.Context, cluster *unstructured.Unstructured, v opsValues) error {
-	ac := newAddonConfig()
-	ac.SetNamespace(cluster.GetNamespace())
-	ac.SetName(r.addonConfigName(cluster.GetName()))
-	ac.SetAnnotations(map[string]string{ownedForDeletionAnnotation: "true"})
-	ac.Object["spec"] = map[string]any{
-		"values": map[string]any{
-			"helmValues": map[string]any{
-				"clusterName": cluster.GetName(),
-				"vcfOps": map[string]any{
-					"instanceFqdn": v.InstanceFqdn,
-					"platformFqdn": v.PlatformFqdn,
-					"instanceCA":   v.InstanceCA,
-					"platformCA":   v.PlatformCA,
-					"clientId":     v.ClientID,
-					"clientSecret": v.ClientSecret,
-				},
-				"aggregator": map[string]any{
-					"podAnnotations": map[string]any{secretHashAnnotation: secretHash(v.ClientSecret)},
-				},
-			},
-		},
-	}
-	if err := r.Client.Apply(ctx, client.ApplyConfigurationFromUnstructured(ac),
-		client.FieldOwner(r.FieldManager), client.ForceOwnership); err != nil {
-		return fmt.Errorf("apply AddonConfig %s/%s: %w", ac.GetNamespace(), ac.GetName(), err)
 	}
 	return nil
 }

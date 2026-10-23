@@ -2,13 +2,15 @@
 # Onboard a VKS cluster to VCF Operations Platform Observability without the
 # "Onboard VKS Cluster" dialog, and keep its OAuth secret in step afterwards.
 #
-#   scripts/onboard.sh <cluster> <supervisor-namespace>          print the AddonConfig
+#   scripts/onboard.sh <cluster> <supervisor-namespace>          print the credentials Secret
 #   scripts/onboard.sh <cluster> <supervisor-namespace> --check  is it still current?
 #
 # Print mode asks VCF Operations for the cluster's configuration (CA
 # certificates, endpoints, OAuth client ID), issues the cluster's OAuth
-# client a new secret, and prints the cluster's AddonConfig for the
-# platform-observability addon:
+# client a new secret, and prints the Secret platform-observability-<cluster>
+# that the addon's AddonConfigDefinition reads. It is the Secret the onboarder
+# writes, so a cluster onboarded with this script can be handed to the
+# onboarder later without a new secret:
 #
 #   VCF_OPS_URL=https://ops.example.com VCF_OPS_PASSWORD=... \
 #     scripts/onboard.sh lab1-vks-01 my-namespace | kubectl apply -f -
@@ -27,16 +29,17 @@
 # Why --check exists: there is no way to read a client's secret, only to
 # issue a new one. Opening the dialog for a cluster, or running print mode
 # again, does exactly that, and the cluster's collectors then get 401s until
-# they get the new secret. So the AddonConfig records when the secret it
+# they get the new secret. So the Secret records when the secret it
 # carries was issued (annotation platform-observability/secret-rotated-at, from
 # VSP's lastSecretRotationDate), and --check compares that with VSP without
 # touching the secret. Exit 0: in step. Exit 3: rotated elsewhere, or no
-# AddonConfig yet; run print mode and apply its output. A reconcile loop is
+# Secret yet; run print mode and apply its output. A reconcile loop is
 #
 #   scripts/onboard.sh "$c" "$ns" --check || scripts/onboard.sh "$c" "$ns" | kubectl apply -f -
 #
-# Print mode also puts a hash of the secret on the aggregator pods, so a new
-# secret changes the helm values and rolls the aggregators onto it.
+# Print mode also puts a hash of the secret on the Secret, which the
+# AddonConfigDefinition puts on the aggregator pods, so a new secret changes
+# the helm values and rolls the aggregators onto it.
 #
 # Environment:
 #   VCF_OPS_URL            required, e.g. https://ops.example.com
@@ -59,7 +62,7 @@ mode=print
 if [ $# -eq 3 ]; then [ "$3" = --check ] && mode=check || usage; fi
 
 addon=platform-observability
-config_name="$cluster-$addon"
+secret_name="$addon-$cluster"
 rotated_annotation=platform-observability/secret-rotated-at
 component_type=vcf-obs-data-platform
 client_name="svc-vodap-app0-$cluster"
@@ -83,13 +86,13 @@ vsp_rotated_at() {
 if [ "$mode" = check ]; then
   vsp_date=$(vsp_rotated_at "${VSP_URL:?VSP_URL is required with --check}")
   [ -n "$vsp_date" ] || { echo "$cluster: no client $client_name in VSP; onboard it first" >&2; exit 3; }
-  stored=$(kubectl -n "$namespace" get addonconfig "$config_name" \
+  stored=$(kubectl -n "$namespace" get secret "$secret_name" \
     -o jsonpath="{.metadata.annotations.${rotated_annotation//./\\.}}" 2>/dev/null || true)
   if [ -z "$stored" ]; then
-    echo "$cluster: no AddonConfig $namespace/$config_name, or it has no $rotated_annotation"
+    echo "$cluster: no Secret $namespace/$secret_name, or it has no $rotated_annotation"
     exit 3
   elif [ "$stored" != "$vsp_date" ]; then
-    echo "$cluster: secret rotated at $vsp_date, AddonConfig carries the one from $stored"
+    echo "$cluster: secret rotated at $vsp_date, the Secret carries the one from $stored"
     exit 3
   fi
   echo "$cluster: in step (secret issued $vsp_date)"
@@ -136,40 +139,30 @@ rotated_at=$(vsp_rotated_at "${VSP_URL:-https://$(jq -r '.[0].vmspPlatformFqdn' 
 [ -n "$rotated_at" ] || { echo "no client $client_name in VSP" >&2; exit 1; }
 secret_hash=$(printf %s "$client_secret" | sha256sum | cut -c1-16)
 
-# No internalToken: the chart generates the agent-to-aggregator token on
-# first install and keeps it, so running this script again changes nothing
-# that would need the agents restarted.
+# The keys and the secret-hash annotation are the ones the onboarder writes
+# and the AddonConfigDefinition reads (onboarder/reconciler.go).
 jq -n --argjson c "$(jq '.[0]' <<<"$config")" \
-  --arg cluster "$cluster" --arg ns "$namespace" --arg name "$config_name" \
+  --arg ns "$namespace" --arg name "$secret_name" \
   --arg secret "$client_secret" --arg hash "$secret_hash" \
   --arg rotated_annotation "$rotated_annotation" --arg rotated_at "$rotated_at" '
 {
-  apiVersion: "addons.kubernetes.vmware.com/v1alpha1",
-  kind: "AddonConfig",
+  apiVersion: "v1",
+  kind: "Secret",
   metadata: {
     name: $name,
     namespace: $ns,
     annotations: {
-      "clusteraddon.addons.kubernetes.vmware.com/owned-for-deletion": "true",
+      "platform-observability/secret-hash": $hash,
       ($rotated_annotation): $rotated_at
     }
   },
-  spec: {
-    values: {
-      helmValues: {
-        clusterName: $cluster,
-        vcfOps: {
-          instanceFqdn: $c.vmspInstanceFqdn,
-          platformFqdn: $c.vmspPlatformFqdn,
-          instanceCA: $c.vmspInstanceCertificate,
-          platformCA: $c.vmspPlatformCertificate,
-          clientId: $c.saClientId,
-          clientSecret: $secret
-        },
-        aggregator: {
-          podAnnotations: {"platform-observability/secret-hash": $hash}
-        }
-      }
-    }
+  type: "Opaque",
+  stringData: {
+    clientId: $c.saClientId,
+    clientSecret: $secret,
+    instanceFqdn: $c.vmspInstanceFqdn,
+    platformFqdn: $c.vmspPlatformFqdn,
+    instanceCA: $c.vmspInstanceCertificate,
+    platformCA: $c.vmspPlatformCertificate
   }
 }'

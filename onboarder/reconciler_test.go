@@ -31,7 +31,6 @@ func newHarness(t *testing.T, objs ...client.Object) *harness {
 	t.Helper()
 	mapper := meta.NewDefaultRESTMapper(nil)
 	mapper.Add(clusterGVK, meta.RESTScopeNamespace)
-	mapper.Add(addonConfigGVK, meta.RESTScopeNamespace)
 	mapper.Add(secretGVK, meta.RESTScopeNamespace)
 	c := fake.NewClientBuilder().
 		WithScheme(runtime.NewScheme()).
@@ -80,15 +79,6 @@ func (h *harness) cluster(ns, name string) *unstructured.Unstructured {
 	return u
 }
 
-func (h *harness) addonConfig(ns, cluster string) *unstructured.Unstructured {
-	h.t.Helper()
-	u := newAddonConfig()
-	if err := h.client.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: cluster + "-platform-observability"}, u); err != nil {
-		h.t.Fatal(err)
-	}
-	return u
-}
-
 // secret returns the cluster's credentials Secret, or nil if there is none.
 func (h *harness) secret(ns, cluster string) *unstructured.Unstructured {
 	h.t.Helper()
@@ -119,11 +109,6 @@ func (h *harness) secretValue(ns, cluster, key string) string {
 	return string(b)
 }
 
-func helmValue(u *unstructured.Unstructured, path ...string) string {
-	s, _, _ := unstructured.NestedString(u.Object, append([]string{"spec", "values", "helmValues"}, path...)...)
-	return s
-}
-
 func (h *harness) events() []string {
 	var out []string
 	for {
@@ -151,10 +136,6 @@ func TestOnboardsOnceAndThenLeavesTheSecretAlone(t *testing.T) {
 	if !controllerutil.ContainsFinalizer(h.cluster("ns1", "c1"), finalizer) {
 		t.Fatal("no finalizer after onboarding")
 	}
-	ac := newAddonConfig()
-	if err := h.client.Get(context.Background(), types.NamespacedName{Namespace: "ns1", Name: "c1-platform-observability"}, ac); !apierrors.IsNotFound(err) {
-		t.Fatalf("AddonConfig written without --legacy-addon-config: %v", err)
-	}
 	rv := s.GetResourceVersion()
 
 	// Resyncs: no second POST, and no write.
@@ -168,75 +149,6 @@ func TestOnboardsOnceAndThenLeavesTheSecretAlone(t *testing.T) {
 	}
 	if ev := h.events(); len(ev) != 1 || !strings.Contains(ev[0], "Onboarded") {
 		t.Fatalf("events: %v", ev)
-	}
-}
-
-func TestAdoptsAnOnboardShAddonConfigWithoutRotating(t *testing.T) {
-	existing := newAddonConfig()
-	existing.SetNamespace("ns1")
-	existing.SetName("c1-platform-observability")
-	existing.Object["spec"] = map[string]any{"values": map[string]any{"helmValues": map[string]any{
-		"clusterName": "c1",
-		"vcfOps": map[string]any{
-			"instanceFqdn": "shared01.example", "platformFqdn": "vsp01.example",
-			"instanceCA": "INSTANCE-CA", "platformCA": "PLATFORM-CA",
-			"clientId": "id-c1", "clientSecret": "kept-secret",
-		},
-	}}}
-	h := newHarness(t, cluster("ns1", "c1", true, nil))
-	if err := h.client.Apply(context.Background(), client.ApplyConfigurationFromUnstructured(existing),
-		client.FieldOwner("kubectl"), client.ForceOwnership); err != nil {
-		t.Fatal(err)
-	}
-	h.reconcile("ns1", "c1")
-
-	if n := h.ops.count("POST c1"); n != 0 {
-		t.Fatalf("POST %d times while adopting, want 0", n)
-	}
-	if h.secretValue("ns1", "c1", "clientSecret") != "kept-secret" || h.secretValue("ns1", "c1", "platformCA") != "PLATFORM-CA" {
-		t.Fatalf("secret: %v", h.secret("ns1", "c1").Object)
-	}
-	ac := h.addonConfig("ns1", "c1")
-	if hasCredentials(ac) {
-		t.Fatalf("credentials left in the AddonConfig: %v", ac.Object["spec"])
-	}
-	// Moved, not issued: resyncs write nothing more.
-	rv := h.secret("ns1", "c1").GetResourceVersion()
-	acRV := ac.GetResourceVersion()
-	h.reconcile("ns1", "c1")
-	if h.secret("ns1", "c1").GetResourceVersion() != rv || h.addonConfig("ns1", "c1").GetResourceVersion() != acRV {
-		t.Fatal("written again on resync")
-	}
-}
-
-func TestLegacyAddonConfigMirrorsTheSecret(t *testing.T) {
-	h := newHarness(t, cluster("ns1", "c1", true, nil))
-	h.r.LegacyAddonConfig = true
-	h.reconcile("ns1", "c1")
-
-	ac := h.addonConfig("ns1", "c1")
-	if helmValue(ac, "vcfOps", "clientSecret") != "secret-c1-1" || helmValue(ac, "clusterName") != "c1" ||
-		helmValue(ac, "aggregator", "podAnnotations", secretHashAnnotation) != secretHash("secret-c1-1") {
-		t.Fatalf("values: %v", ac.Object["spec"])
-	}
-	if h.secretValue("ns1", "c1", "clientSecret") != "secret-c1-1" {
-		t.Fatal("no Secret in legacy mode")
-	}
-	rv := ac.GetResourceVersion()
-	h.reconcile("ns1", "c1")
-	if h.addonConfig("ns1", "c1").GetResourceVersion() != rv {
-		t.Fatal("AddonConfig written on resync")
-	}
-
-	// Turning legacy mode off removes the credentials from the AddonConfig
-	// and keeps the Secret.
-	h.r.LegacyAddonConfig = false
-	h.reconcile("ns1", "c1")
-	if hasCredentials(h.addonConfig("ns1", "c1")) {
-		t.Fatal("credentials left in the AddonConfig")
-	}
-	if h.secretValue("ns1", "c1", "clientSecret") != "secret-c1-1" || h.ops.count("POST c1") != 1 {
-		t.Fatal("Secret changed or secret re-issued")
 	}
 }
 
@@ -260,48 +172,6 @@ func TestRotateAnnotationIssuesOneNewSecret(t *testing.T) {
 	}
 	if _, ok := h.cluster("ns1", "c1").GetAnnotations()[rotateAnnotation]; ok {
 		t.Fatal("rotate annotation still set")
-	}
-}
-
-func TestOffboardKeepsOtherOwnersKeys(t *testing.T) {
-	h := newHarness(t, cluster("ns1", "c1", true, nil))
-	h.r.LegacyAddonConfig = true
-	h.reconcile("ns1", "c1")
-
-	// Argo CD owns a key in the same AddonConfig.
-	argo := newAddonConfig()
-	argo.SetNamespace("ns1")
-	argo.SetName("c1-platform-observability")
-	argo.Object["spec"] = map[string]any{"values": map[string]any{"helmValues": map[string]any{
-		"aggregator": map[string]any{"replicaCount": int64(2)},
-	}}}
-	if err := h.client.Apply(context.Background(), client.ApplyConfigurationFromUnstructured(argo),
-		client.FieldOwner("argocd-controller")); err != nil {
-		t.Fatal(err)
-	}
-
-	c := h.cluster("ns1", "c1")
-	c.SetLabels(nil)
-	if err := h.client.Update(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
-	h.reconcile("ns1", "c1")
-
-	if n := h.ops.count("DELETE c1"); n != 1 {
-		t.Fatalf("DELETE %d times, want 1", n)
-	}
-	if controllerutil.ContainsFinalizer(h.cluster("ns1", "c1"), finalizer) {
-		t.Fatal("finalizer left after offboarding")
-	}
-	ac := h.addonConfig("ns1", "c1")
-	if _, found, _ := unstructured.NestedMap(ac.Object, "spec", "values", "helmValues", "vcfOps"); found {
-		t.Fatalf("vcfOps left after offboarding: %v", ac.Object["spec"])
-	}
-	if n, _, _ := unstructured.NestedInt64(ac.Object, "spec", "values", "helmValues", "aggregator", "replicaCount"); n != 2 {
-		t.Fatalf("Argo CD's key lost: %v", ac.Object["spec"])
-	}
-	if h.secret("ns1", "c1") != nil {
-		t.Fatal("credentials Secret left after offboarding")
 	}
 }
 
@@ -357,5 +227,47 @@ func TestUnlabelledClusterIsIgnored(t *testing.T) {
 	h.reconcile("ns1", "c1")
 	if h.ops.count("POST c1")+h.ops.count("DELETE c1") != 0 {
 		t.Fatal("Ops called for an unlabelled cluster")
+	}
+}
+
+func TestAdoptsAnOnboardShSecretWithoutRotating(t *testing.T) {
+	h := newHarness(t, cluster("ns1", "c1", true, nil))
+	seed(h, "ns1", "c1", "kubectl", "kept-secret")
+	h.reconcile("ns1", "c1")
+
+	if n := h.ops.count("POST c1"); n != 0 {
+		t.Fatalf("POST %d times while adopting, want 0", n)
+	}
+	s := h.secret("ns1", "c1")
+	if h.secretValue("ns1", "c1", "clientSecret") != "kept-secret" || !h.r.appliedBy(s) {
+		t.Fatalf("not taken over: %v", s.Object)
+	}
+	if !controllerutil.ContainsFinalizer(h.cluster("ns1", "c1"), finalizer) {
+		t.Fatal("no finalizer after adopting")
+	}
+	rv := s.GetResourceVersion()
+	h.reconcile("ns1", "c1")
+	if h.secret("ns1", "c1").GetResourceVersion() != rv {
+		t.Fatal("written again on resync")
+	}
+}
+
+func TestOffboardDeletesTheSecret(t *testing.T) {
+	h := newHarness(t, cluster("ns1", "c1", true, nil))
+	h.reconcile("ns1", "c1")
+	c := h.cluster("ns1", "c1")
+	c.SetLabels(nil)
+	if err := h.client.Update(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile("ns1", "c1")
+	if n := h.ops.count("DELETE c1"); n != 1 {
+		t.Fatalf("DELETE %d times, want 1", n)
+	}
+	if h.secret("ns1", "c1") != nil {
+		t.Fatal("credentials Secret left after offboarding")
+	}
+	if controllerutil.ContainsFinalizer(h.cluster("ns1", "c1"), finalizer) {
+		t.Fatal("finalizer left after offboarding")
 	}
 }

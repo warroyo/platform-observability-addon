@@ -23,7 +23,7 @@ cluster by hand.
   the two VCF Operations endpoints from a ConfigMap, so the values are the
   same for every cluster.
 - `chart/addon-config-definition.yaml`: the source of the addon's
-  AddonConfigDefinition (ACD). From chart 0.2.0 the chart ships it as the
+  AddonConfigDefinition (ACD). Since chart 0.2.0 the chart ships it as the
   `addons.kubernetes.vmware.com/addon-config-definition` annotation in
   `Chart.yaml`, which VKS 3.8 and later read. Before 3.8, a helm
   AddonRepository got a generated ACD with only `helmValues` and `helmOptions`.
@@ -36,7 +36,7 @@ cluster by hand.
 - `install/addonrepository.yaml`: the AddonRepository and
   AddonRepositoryInstall that register the chart as the addon
   `platform-observability`. A Supervisor administrator applies them once.
-- `scripts/onboard.sh`: prints a cluster's `AddonConfig`, built from the VCF
+- `scripts/onboard.sh`: prints a cluster's credentials Secret, built from the VCF
   Operations configurations API. It is the manual path for one cluster.
 - `onboarder/`: a Supervisor Service controller that onboards every labelled
   cluster without running `onboard.sh` by hand. It writes the credentials
@@ -96,8 +96,8 @@ The onboarder writes the Secret `platform-observability-lab1-vks-01` in
 `my-namespace`, and the chart reads it through the ACD. The second label
 installs the `helm-controller` addon, which helm addons need.
 
-To upgrade a cluster that runs chart 0.1.0, see
-[Upgrade from chart 0.1.0](onboarder/README.md#upgrade-from-chart-010).
+To move to a newer chart, see
+[Upgrading the chart](onboarder/README.md#upgrading-the-chart).
 
 ### Without the onboarder
 
@@ -109,7 +109,7 @@ namespace (edit the namespace first):
 kubectl apply -f examples/addoninstall.yaml
 ```
 
-Write the cluster's AddonConfig and label it:
+Write the cluster's credentials Secret and label the cluster:
 
 ```sh
 VCF_OPS_URL=https://ops.example.com \
@@ -121,9 +121,9 @@ kubectl -n my-namespace label cluster lab1-vks-01 \
   addon.addons.kubernetes.vmware.com/helm-controller=managed
 ```
 
-`onboard.sh` writes the credentials into the AddonConfig. The 0.2.0 ACD still
-reads them there as the fallback, when no Secret exists, so the secret is then
-in an AddonConfig.
+`onboard.sh` prints the Secret `platform-observability-<cluster>`. The 0.3.0 ACD
+reads the credentials from that Secret only. The onboarder can take the Secret
+over later without issuing a new secret.
 
 ## The onboarding account
 
@@ -222,7 +222,7 @@ rotate, or run `onboard.sh` for that cluster and apply its output.
 `admin@vsp.local`, so automation should not depend on it: the onboarding
 account alone onboards, rotates and offboards.
 
-`onboard.sh` records on the AddonConfig when the secret it carries was
+`onboard.sh` records on the Secret when the secret it carries was
 issued (`platform-observability/secret-rotated-at`, from VSP's
 `lastSecretRotationDate`), and `onboard.sh <cluster> <ns> --check` compares
 that with VSP without touching the secret. It exits 3 when the secret was
@@ -240,8 +240,7 @@ puts a hash of the secret on the aggregator pods, so a new secret rolls them.
 
 - The OAuth client secret is in the Secret `platform-observability-<cluster>`
   in the cluster's Supervisor namespace, readable by anyone who can read
-  Secrets there. With `onboard.sh`, or the onboarder in legacy mode, it is in
-  an AddonConfig in plain text instead.
+  Secrets there. It is in no other object.
 - A new secret reaches the aggregators only on helm-controller's HelmRelease
   interval (10 minutes). ACD output templates carry no metadata, so the values
   Secret can't get Flux's watch label.

@@ -5,25 +5,20 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -39,9 +34,8 @@ func env(name, def string) string {
 
 func main() {
 	var (
-		addonName     = flag.String("addon-name", "platform-observability", "the addon's name: the cluster label is addons.kubernetes.vmware.com/<addon-name> and the AddonConfig <cluster>-<addon-name>")
-		fieldManager  = flag.String("field-manager", "platform-observability-onboarder", "the server-side apply field manager for the credentials Secrets and the AddonConfig keys this controller owns")
-		legacyConfig  = flag.Bool("legacy-addon-config", false, "also write the credentials into each cluster's AddonConfig, for clusters still on chart 0.1.0; without it they are removed from there")
+		addonName     = flag.String("addon-name", "platform-observability", "the addon's name: the cluster label is addons.kubernetes.vmware.com/<addon-name> and the credentials Secret <addon-name>-<cluster>")
+		fieldManager  = flag.String("field-manager", "platform-observability-onboarder", "the server-side apply field manager for the credentials Secrets")
 		syncPeriod    = flag.Duration("sync-period", 10*time.Minute, "how often every cluster is reconciled again; a resync makes no Ops call")
 		maxConcurrent = flag.Int("max-concurrent", 4, "reconciles at a time; bounds the POSTs to Ops when many clusters are labelled at once")
 		endpointsTTL  = flag.Duration("endpoints-ttl", 10*time.Minute, "how long one GET configurations serves the endpoints for every cluster")
@@ -89,8 +83,6 @@ func main() {
 		Recorder:     mgr.GetEventRecorder("platform-observability-onboarder"),
 		AddonName:    *addonName,
 		FieldManager: *fieldManager,
-
-		LegacyAddonConfig: *legacyConfig,
 	}
 
 	// Clusters: the labelled ones, and any that still carry our finalizer (the
@@ -99,25 +91,12 @@ func main() {
 	relevant := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetLabels()[r.enabledLabel()] == "enabled" || controllerutil.ContainsFinalizer(o, finalizer)
 	})
-	suffix := "-" + *addonName
-	// AddonConfigs, metadata only: a deleted or changed AddonConfig brings its
-	// cluster back at once instead of at the next resync. Secrets are not
-	// watched: the Supervisor refuses a cluster-wide Secret watch to a
-	// third-party service account, so a deleted credentials Secret is only
-	// noticed at the next resync.
-	addonConfigToCluster := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []ctrl.Request {
-		if !strings.HasSuffix(o.GetName(), suffix) {
-			return nil
-		}
-		return []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: o.GetNamespace(), Name: strings.TrimSuffix(o.GetName(), suffix)}}}
-	})
-	addonConfigMeta := &metav1.PartialObjectMetadata{}
-	addonConfigMeta.SetGroupVersionKind(addonConfigGVK)
-
+	// Secrets are not watched: the Supervisor refuses a cluster-wide Secret
+	// watch to a third-party service account, so a deleted credentials Secret
+	// is only noticed at the next resync.
 	if err := ctrl.NewControllerManagedBy(mgr).
 		Named("platform-observability-onboarder").
 		For(newCluster(), builder.WithPredicates(relevant)).
-		Watches(addonConfigMeta, addonConfigToCluster, builder.OnlyMetadata).
 		WithOptions(controller.Options{MaxConcurrentReconciles: *maxConcurrent}).
 		Complete(r); err != nil {
 		setupLog.Error(err, "controller")
@@ -132,7 +111,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting", "addon", *addonName, "ops", opsURL, "opsUser", opsUser, "legacyAddonConfig", *legacyConfig)
+	setupLog.Info("starting", "addon", *addonName, "ops", opsURL, "opsUser", opsUser)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager stopped")
 		os.Exit(1)
