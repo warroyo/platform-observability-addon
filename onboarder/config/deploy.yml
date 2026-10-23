@@ -186,21 +186,27 @@ spec:
 #@ end
 #@ if data.values.addon_repository:
 ---
-#! The addon's helm repository, what install/addonrepository.yaml registers by
-#! hand. The VKS addon manager creates the Addon, an AddonRelease per version
-#! and a generated AddonConfigDefinition from it, in vmware-system-vks-public.
+#! The addon's helm repository (OCI, on GitHub Packages), what
+#! install/addonrepository.yaml registers by hand. The VKS addon manager
+#! creates the Addon, an AddonRelease per version and the chart's own
+#! AddonConfigDefinition from it, in vmware-system-vks-public.
 #!
 #! After the AddonRepositoryInstall exists, the webhook allows only
 #! spec.addonFilters to change, so an upgrade may change addon_versions and
-#! nothing else here. package-offerings is required and frozen, so it lists no
+#! nothing else here. A new URL needs new names: these are -oci-repo, after
+#! -repo for the GitHub Pages repository; the upgrade deletes the old pair and
+#! creates this one. package-offerings is required and frozen, so it lists no
 #! versions.
 apiVersion: addons.kubernetes.vmware.com/v1alpha1
 kind: AddonRepository
 metadata:
-  name: #@ data.values.addon_name + "-repo"
+  name: #@ data.values.addon_name + "-oci-repo"
   namespace: #@ data.values.namespace
   annotations:
-    #@ offerings = {"repositoryVersion": "1.0.0", "packages": {data.values.addon_name: {"versions": []}}}
+    #! repositoryVersion 2.0.0, not the Pages repository's 1.0.0: the
+    #! AddonRepositoryInstall webhook refuses a second registration whose
+    #! offerings equal an existing one's, as a duplicate.
+    #@ offerings = {"repositoryVersion": "2.0.0", "packages": {data.values.addon_name: {"versions": []}}}
     addons.kubernetes.vmware.com/package-offerings: #@ json.encode(offerings)
 spec:
   fetch:
@@ -209,8 +215,8 @@ spec:
   addonFilters:
   - name: #@ data.values.addon_name
     versions: #@ data.values.addon_versions
-  targetRepositoryName: #@ data.values.addon_name + "-repo"
-  version: "1.0.0"
+  targetRepositoryName: #@ data.values.addon_name + "-oci-repo"
+  version: "2.0.0"
 ---
 #! The addon manager adds its own labels and annotations to the
 #! AddonRepository and AddonRepositoryInstall, and its webhook refuses any
@@ -238,10 +244,10 @@ rebaseRules:
 apiVersion: addons.kubernetes.vmware.com/v1alpha1
 kind: AddonRepositoryInstall
 metadata:
-  name: #@ data.values.addon_name + "-repo-install"
+  name: #@ data.values.addon_name + "-oci-repo-install"
   namespace: #@ data.values.namespace
 spec:
   addonRepositoryRef:
-    name: #@ data.values.addon_name + "-repo"
+    name: #@ data.values.addon_name + "-oci-repo"
     namespace: #@ data.values.namespace
 #@ end
