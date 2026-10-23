@@ -285,6 +285,10 @@ func parseEndpoints(body []byte) (Endpoints, error) {
 	return Endpoints{}, errNoEndpoints
 }
 
+// Offboard deletes the cluster in Ops. Ops answers 500 ("Downstream service
+// returned error") to a DELETE for a cluster it doesn't list, including one
+// an earlier DELETE removed while also answering with an error. So a failed
+// DELETE is checked against a fresh GET: a cluster not listed is offboarded.
 func (o *opsClient) Offboard(ctx context.Context, cluster string) error {
 	code, _, err := o.do(ctx, http.MethodDelete, configurationsPath+"/"+url.PathEscape(cluster))
 	if err != nil {
@@ -294,5 +298,36 @@ func (o *opsClient) Offboard(ctx context.Context, cluster string) error {
 	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
 		return nil
 	}
-	return fmt.Errorf("ops DELETE configurations/%s: HTTP %d", cluster, code)
+	deleteErr := fmt.Errorf("ops DELETE configurations/%s: HTTP %d", cluster, code)
+	listed, err := o.listed(ctx, cluster)
+	if err != nil {
+		return fmt.Errorf("%w; and checking whether Ops still lists it: %w", deleteErr, err)
+	}
+	if !listed {
+		return nil
+	}
+	return deleteErr
+}
+
+// listed reports whether a live GET configurations lists the cluster.
+func (o *opsClient) listed(ctx context.Context, cluster string) (bool, error) {
+	code, body, err := o.do(ctx, http.MethodGet, configurationsPath)
+	if err != nil {
+		return false, err
+	}
+	if code != http.StatusOK {
+		return false, fmt.Errorf("ops GET configurations: HTTP %d", code)
+	}
+	var entries []struct {
+		ClusterName string `json:"clusterName"`
+	}
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return false, fmt.Errorf("ops GET configurations: %w", err)
+	}
+	for _, e := range entries {
+		if e.ClusterName == cluster {
+			return true, nil
+		}
+	}
+	return false, nil
 }

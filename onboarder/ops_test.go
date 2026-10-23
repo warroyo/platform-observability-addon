@@ -21,6 +21,8 @@ type fakeOpsServer struct {
 	clusters map[string]bool
 	// expireNext makes the next configurations call answer 401 once.
 	expireNext bool
+	// failDelete makes every DELETE answer 500, even for a listed cluster.
+	failDelete bool
 }
 
 func newFakeOps(t *testing.T) (*fakeOpsServer, *opsClient) {
@@ -82,6 +84,12 @@ func (f *fakeOpsServer) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, configurationsPath+"/"):
 		c := strings.TrimPrefix(r.URL.Path, configurationsPath+"/")
 		f.calls["DELETE "+c]++
+		// As the real Ops does for a cluster it doesn't list.
+		if !f.clusters[c] || f.failDelete {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"Internal Server error, cause unknown."}`))
+			return
+		}
 		delete(f.clusters, c)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -142,5 +150,34 @@ func TestOpsLogsInAgainOnExpiredToken(t *testing.T) {
 func TestParseOnboardWithoutSecretFails(t *testing.T) {
 	if _, err := parseOnboard([]byte(`{"commands":["helm repo add x y"]}`)); err == nil {
 		t.Fatal("want an error when step 5 is missing")
+	}
+}
+
+// Ops answers 500 to a DELETE for a cluster it doesn't list. That is
+// offboarded, not an error, or the finalizer never comes off.
+func TestOpsOffboardOfAnUnlistedClusterSucceeds(t *testing.T) {
+	f, ops := newFakeOps(t)
+	if _, err := ops.Onboard(context.Background(), "other"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ops.Offboard(context.Background(), "gone"); err != nil {
+		t.Fatalf("offboard of an unlisted cluster: %v", err)
+	}
+	if f.count("DELETE gone") != 1 || f.count("GET") != 1 {
+		t.Fatalf("calls: %v", f.calls)
+	}
+}
+
+// A failed DELETE for a cluster Ops still lists stays an error.
+func TestOpsOffboardFailureForAListedClusterIsAnError(t *testing.T) {
+	f, ops := newFakeOps(t)
+	if _, err := ops.Onboard(context.Background(), "c1"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.failDelete = true
+	f.mu.Unlock()
+	if err := ops.Offboard(context.Background(), "c1"); err == nil {
+		t.Fatal("want an error while Ops still lists the cluster")
 	}
 }

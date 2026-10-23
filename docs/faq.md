@@ -74,3 +74,12 @@ AddonRepository before its AddonRepositoryInstall, and the webhook refuses
 that: `delete is not allowed`. In the service namespace, delete the old
 AddonRepositoryInstall, then the old AddonRepository. kapp then reconciles. See
 [Upgrading](upgrading.md#moving-the-chart-repository).
+
+## Why did Ops answer 500 when a cluster was offboarded?
+
+VCF Operations answers `DELETE configurations/<cluster>` with HTTP 500
+("Downstream service returned error") for a cluster it doesn't list. Seen on
+2026-10-23: the clusters' Ops entries and VSP clients were already gone, and
+every retry got 500, so the finalizer never came off. Since onboarder 0.3.2, a
+failed DELETE is checked against a fresh `GET configurations`, and a cluster
+Ops no longer lists counts as offboarded.
