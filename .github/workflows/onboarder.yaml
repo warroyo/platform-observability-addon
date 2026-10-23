@@ -30,6 +30,11 @@ jobs:
           go-version-file: onboarder/go.mod
       # acd_test.go runs helm template on what the ACD renders.
       - uses: azure/setup-helm@v4
+      - name: Fetch the chart's dependencies
+        working-directory: chart/platform-observability
+        run: |
+          helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+          helm dependency build
       - run: make test
 
   release:
