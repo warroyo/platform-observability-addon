@@ -114,7 +114,7 @@ func get(m map[string]any, path ...string) any {
 func TestACDRendersTheSecret(t *testing.T) {
 	values := map[string]any{"helmValues": map[string]any{
 		"aggregator": map[string]any{"replicaCount": 2},
-		// Left in an AddonConfig by chart 0.1.0: the Secret wins.
+		// Set in an AddonConfig: the Secret wins.
 		"vcfOps": map[string]any{"clientSecret": "stale"},
 	}}
 	// A second input, so .Dependencies is populated whatever the Secret.
@@ -161,9 +161,10 @@ func TestACDWithoutCredentialsInstallsNothing(t *testing.T) {
 	}
 }
 
-func TestACDKeepsLegacyAddonConfigCredentials(t *testing.T) {
+// Credentials in an AddonConfig are not a way in: without the Secret the
+// chart installs nothing, and the AddonConfig's secret is not passed on.
+func TestACDIgnoresAddonConfigCredentials(t *testing.T) {
 	legacy := map[string]any{
-		"clusterName": "c1",
 		"vcfOps": map[string]any{
 			"instanceFqdn": "shared01.example", "platformFqdn": "vsp01.example",
 			"instanceCA": "INSTANCE-CA", "platformCA": "PLATFORM-CA",
@@ -171,10 +172,10 @@ func TestACDKeepsLegacyAddonConfigCredentials(t *testing.T) {
 		},
 	}
 	v := render(t, map[string]any{"helmValues": legacy}, nil)
-	if _, set := v["enabled"]; set || get(v, "vcfOps", "clientSecret") != "kept-secret" {
+	if v["enabled"] != false || get(v, "vcfOps", "clientSecret") != nil {
 		t.Fatalf("values: %v", v)
 	}
-	helmTemplate(t, v, true)
+	helmTemplate(t, v, false)
 }
 
 // helmTemplate renders the chart with these values and checks whether the

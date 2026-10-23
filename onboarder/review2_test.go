@@ -11,10 +11,8 @@ import (
 	"testing"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
@@ -200,54 +198,5 @@ func TestReview2FailingRefreshIsShared(t *testing.T) {
 	wg.Wait()
 	if n := gets.Load(); n != 1 {
 		t.Fatalf("GET %d times for 8 concurrent misses on a failing Ops, want 1", n)
-	}
-}
-
-// Live run: unlabelling a cluster also stops it matching the AddonInstall,
-// whose ClusterAddon is garbage collected with the AddonConfig it owns. The
-// offboard must not recreate the AddonConfig when that lands mid-offboard.
-func TestOffboardDoesNotRecreateCollectedAddonConfig(t *testing.T) {
-	h := newHarness(t, cluster("ns1", "c1", true, nil))
-	h.r.LegacyAddonConfig = true
-	h.reconcile("ns1", "c1")
-	// The fake client sets no UIDs; the real server gives every object one.
-	orig := h.addonConfig("ns1", "c1")
-	if err := h.client.Delete(context.Background(), orig); err != nil {
-		t.Fatal(err)
-	}
-	orig.SetUID("original")
-	orig.SetResourceVersion("")
-	if err := h.client.Create(context.Background(), orig); err != nil {
-		t.Fatal(err)
-	}
-	unlabel(h, "ns1", "c1")
-	var collected atomic.Bool
-	h.r.Client = interceptor.NewClient(h.client.(client.WithWatch), interceptor.Funcs{
-		Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
-			if collected.CompareAndSwap(false, true) {
-				ac := newAddonConfig()
-				ac.SetNamespace("ns1")
-				ac.SetName("c1-platform-observability")
-				if err := c.Delete(ctx, ac); err != nil {
-					t.Fatal(err)
-				}
-			}
-			return c.Apply(ctx, obj, opts...)
-		},
-	})
-	h.reconcile("ns1", "c1")
-	if !collected.Load() {
-		t.Fatal("offboard made no apply")
-	}
-	ac := newAddonConfig()
-	err := h.client.Get(context.Background(), types.NamespacedName{Namespace: "ns1", Name: "c1-platform-observability"}, ac)
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("AddonConfig recreated after it was collected: %v", err)
-	}
-	if fins := h.cluster("ns1", "c1").GetFinalizers(); len(fins) != 0 {
-		t.Fatalf("finalizers %v, want none", fins)
-	}
-	if n := h.ops.count("DELETE c1"); n != 1 {
-		t.Fatalf("DELETE %d times, want 1", n)
 	}
 }

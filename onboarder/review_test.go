@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -60,7 +61,7 @@ func TestReviewEndpointsFailureDoesNotRotateTwice(t *testing.T) {
 	}
 }
 
-// #5: offboarding an adopted AddonConfig must remove the credentials even if another manager co-owned them.
+// #5: offboarding an adopted Secret must remove it even if another manager co-owned it.
 func TestReviewOffboardAfterAdoptionRemovesCredentials(t *testing.T) {
 	h := newHarness(t, cluster("ns1", "c1", true, nil))
 	seed(h, "ns1", "c1", "kubectl", "kept-secret")
@@ -70,18 +71,15 @@ func TestReviewOffboardAfterAdoptionRemovesCredentials(t *testing.T) {
 	if s := h.secretValue("ns1", "c1", "clientSecret"); s != "" {
 		t.Fatalf("revoked secret %q left in the Secret", s)
 	}
-	if s := helmValue(h.addonConfig("ns1", "c1"), "vcfOps", "clientSecret"); s != "" {
-		t.Fatalf("revoked secret %q left in the AddonConfig", s)
-	}
 }
 
 // #6: a secret without a client ID must not trigger a POST.
 func TestReviewPartialCredentialsDoNotRotate(t *testing.T) {
 	h := newHarness(t, cluster("ns1", "c1", true, nil))
 	seed(h, "ns1", "c1", "kubectl", "kept-secret")
-	ac := h.addonConfig("ns1", "c1")
-	unstructured.RemoveNestedField(ac.Object, "spec", "values", "helmValues", "vcfOps", "clientId")
-	if err := h.client.Update(context.Background(), ac); err != nil {
+	s := h.secret("ns1", "c1")
+	unstructured.RemoveNestedField(s.Object, "data", "clientId")
+	if err := h.client.Update(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = h.r.Reconcile(context.Background(), req("ns1", "c1"))
@@ -90,18 +88,19 @@ func TestReviewPartialCredentialsDoNotRotate(t *testing.T) {
 	}
 }
 
+// seed writes the credentials Secret as scripts/onboard.sh would, under
+// another field manager.
 func seed(h *harness, ns, name, manager, secret string) {
-	existing := newAddonConfig()
+	enc := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	existing := newSecret()
 	existing.SetNamespace(ns)
-	existing.SetName(name + "-platform-observability")
-	existing.Object["spec"] = map[string]any{"values": map[string]any{"helmValues": map[string]any{
-		"clusterName": name,
-		"vcfOps": map[string]any{
-			"instanceFqdn": "shared01.example", "platformFqdn": "vsp01.example",
-			"instanceCA": "INSTANCE-CA", "platformCA": "PLATFORM-CA",
-			"clientId": "id-" + name, "clientSecret": secret,
-		},
-	}}}
+	existing.SetName("platform-observability-" + name)
+	existing.Object["type"] = "Opaque"
+	existing.Object["data"] = map[string]any{
+		"instanceFqdn": enc("shared01.example"), "platformFqdn": enc("vsp01.example"),
+		"instanceCA": enc("INSTANCE-CA"), "platformCA": enc("PLATFORM-CA"),
+		"clientId": enc("id-" + name), "clientSecret": enc(secret),
+	}
 	if err := h.client.Apply(context.Background(), client.ApplyConfigurationFromUnstructured(existing),
 		client.FieldOwner(manager), client.ForceOwnership); err != nil {
 		h.t.Fatal(err)

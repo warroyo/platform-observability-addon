@@ -10,12 +10,9 @@
 # cluster's namespace, and renders its credentials into the chart values. So
 # the OAuth secret is never in an AddonConfig.
 #
-# Order of precedence for the credentials:
-#   1. the Secret, when it exists;
-#   2. helmValues.vcfOps in the AddonConfig, as chart 0.1.0 had them (an
-#      onboarder with legacy_addon_config, or scripts/onboard.sh);
-#   3. neither: enabled false, and the chart installs nothing until the
-#      Secret appears.
+# The credentials come only from the Secret; vcfOps in an AddonConfig is
+# overwritten. Without the Secret, the values say enabled: false, and the
+# chart installs nothing until the Secret appears.
 #
 # The template is Go text/template with sprig, evaluated per cluster by the
 # addon controller. Use only functions shipped ACDs already use (a missing one
@@ -106,15 +103,8 @@ spec:
         {{-   $_ := set $aggregator "podAnnotations" $podAnnotations -}}
         {{-   $_ := set $values "aggregator" $aggregator -}}
         {{- else -}}
-        {{-   $legacySecret := "" -}}
-        {{-   if hasKey $values "vcfOps" -}}
-        {{-     if hasKey (index $values "vcfOps") "clientSecret" -}}
-        {{-       $legacySecret = index $values "vcfOps" "clientSecret" -}}
-        {{-     end -}}
-        {{-   end -}}
-        {{-   if not $legacySecret -}}
-        {{-     $_ := set $values "enabled" false -}}
-        {{-   end -}}
+        {{-   $_ := set $values "vcfOps" (dict) -}}
+        {{-   $_ := set $values "enabled" false -}}
         {{- end -}}
         {{- if not (hasKey $values "clusterName") -}}
         {{-   $_ := set $values "clusterName" .Cluster.name -}}
