@@ -7,7 +7,7 @@ name: release
 on:
   push:
     branches: [main]
-    paths: ["chart/**"]
+    paths: ["chart/**", "scripts/embed-acd.sh"]
   workflow_dispatch: {}
 
 permissions:
@@ -25,6 +25,8 @@ jobs:
         run: |
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+      - name: Check the embedded AddonConfigDefinition is current
+        run: scripts/embed-acd.sh --check
       - uses: azure/setup-helm@v4
       - name: Add the opentelemetry repository for the dependencies
         run: helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts

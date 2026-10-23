@@ -1,0 +1,48 @@
+#@data/values-schema
+---
+#! Filled by the Supervisor: the service's own namespace. Do not edit.
+namespace: ""
+
+#! VCF Operations, and the restricted onboarding account that
+#! scripts/ops-account.sh creates (one privilege, extensions.management.usage).
+ops_url: ""
+ops_username: platform-observability-onboard
+ops_password: ""
+#! PEM CA chain for the Ops certificate, when it is not from a public CA.
+ops_ca: ""
+#! Skip TLS verification of Ops. Labs only.
+ops_insecure: false
+
+#! The addon this service onboards clusters for. The cluster label is
+#! addons.kubernetes.vmware.com/<addon_name>=enabled.
+addon_name: platform-observability
+#! How often every cluster is reconciled again. A resync makes no Ops call.
+sync_period: 10m
+#! Reconciles at a time: bounds the POSTs to Ops when many clusters are
+#! labelled at once.
+max_concurrent: 4
+
+#! Also write each cluster's credentials into its AddonConfig, where chart
+#! 0.1.0 reads them. Chart 0.2.0 and later read the Secret
+#! platform-observability-<cluster> instead. Leave on while any cluster still
+#! runs 0.1.0; turned off, the credentials are removed from the AddonConfigs.
+legacy_addon_config: false
+
+#! Ship one AddonInstall that attaches the addon to labelled clusters in every
+#! namespace (crossNamespaceSelection: Allowed). Turn off to attach it per
+#! namespace yourself (examples/addoninstall.yaml).
+addon_install: true
+#! Pin the AddonInstall to one AddonRelease, e.g. platform-observability.0.1.0.
+#! Empty: no releaseFilter.
+addon_release: ""
+
+#! Register the addon's helm repository (an AddonRepository and its
+#! AddonRepositoryInstall), so the service brings the addon with it. Turn off
+#! when the addon is registered some other way (install/addonrepository.yaml).
+addon_repository: true
+addon_chart_repository: https://warroyo.github.io/platform-observability-addon
+#! Chart versions to offer, one AddonRelease each. Keep a version while
+#! clusters still use it.
+#@schema/default ["0.1.0", "0.2.0"]
+addon_versions:
+- ""

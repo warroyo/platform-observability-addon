@@ -1,0 +1,229 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:json", "json")
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-observability-onboarder-ops
+  namespace: #@ data.values.namespace
+type: Opaque
+stringData:
+  OPS_URL: #@ data.values.ops_url
+  OPS_USERNAME: #@ data.values.ops_username
+  OPS_PASSWORD: #@ data.values.ops_password
+  OPS_INSECURE: #@ "true" if data.values.ops_insecure else "false"
+  #@ if data.values.ops_ca:
+  ops-ca.pem: #@ data.values.ops_ca
+  #@ end
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-observability-onboarder
+  namespace: #@ data.values.namespace
+spec:
+  #! One replica, with leader election as a guard: only one process may
+  #! talk to Ops, or two could issue a secret for the same cluster.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: platform-observability-onboarder
+  template:
+    metadata:
+      labels:
+        app: platform-observability-onboarder
+    spec:
+      serviceAccountName: platform-observability-onboarder
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: onboarder
+        image: onboarder
+        args:
+        - #@ "--addon-name=" + data.values.addon_name
+        - #@ "--sync-period=" + data.values.sync_period
+        - #@ "--max-concurrent=" + str(data.values.max_concurrent)
+        - #@ "--legacy-addon-config=" + ("true" if data.values.legacy_addon_config else "false")
+        envFrom:
+        - secretRef:
+            name: platform-observability-onboarder-ops
+        #@ if data.values.ops_ca:
+        env:
+        - name: OPS_CA_FILE
+          value: /etc/ops-ca/ops-ca.pem
+        volumeMounts:
+        - name: ops-ca
+          mountPath: /etc/ops-ca
+          readOnly: true
+        #@ end
+        ports:
+        - name: probes
+          containerPort: 8081
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: probes
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: probes
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      #@ if data.values.ops_ca:
+      volumes:
+      - name: ops-ca
+        secret:
+          secretName: platform-observability-onboarder-ops
+          items:
+          - key: ops-ca.pem
+            path: ops-ca.pem
+      #@ end
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-observability-onboarder
+  namespace: #@ data.values.namespace
+---
+#! Cluster-wide: Clusters, AddonConfigs and the credentials Secrets live in
+#! every tenant namespace. Secrets get no list or watch: the Supervisor refuses
+#! a cluster-wide Secret list or watch to a third-party service account, so the
+#! controller reads each Secret by name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-observability-onboarder
+rules:
+- apiGroups: ["cluster.x-k8s.io"]
+  resources: ["clusters"]
+  #! patch: the finalizer and the rotate annotation.
+  verbs: ["get", "list", "watch", "patch"]
+- apiGroups: ["addons.kubernetes.vmware.com"]
+  resources: ["addonconfigs"]
+  #! patch: server-side apply of the controller's own keys.
+  verbs: ["get", "list", "watch", "create", "patch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  #! platform-observability-<cluster>: patch and create for server-side apply,
+  #! delete when offboarding.
+  verbs: ["get", "create", "patch", "delete"]
+- apiGroups: ["events.k8s.io"]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: platform-observability-onboarder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: platform-observability-onboarder
+subjects:
+- kind: ServiceAccount
+  name: platform-observability-onboarder
+  namespace: #@ data.values.namespace
+---
+#! Leader election, in the service's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platform-observability-onboarder-leader
+  namespace: #@ data.values.namespace
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-observability-onboarder-leader
+  namespace: #@ data.values.namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: platform-observability-onboarder-leader
+subjects:
+- kind: ServiceAccount
+  name: platform-observability-onboarder
+  namespace: #@ data.values.namespace
+#@ if data.values.addon_install:
+---
+#! One AddonInstall for every namespace, the way VCF Operations' telegraf ships
+#! one. The cluster label is then the only per-cluster switch. A helm addon
+#! also needs the helm-controller addon on the cluster
+#! (addon.addons.kubernetes.vmware.com/helm-controller=managed).
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonInstall
+metadata:
+  name: #@ data.values.addon_name + "-addoninstall"
+  namespace: #@ data.values.namespace
+spec:
+  addonRef:
+    name: #@ data.values.addon_name
+  clusters:
+  - selector:
+      matchLabels:
+        #@yaml/text-templated-strings
+        addons.kubernetes.vmware.com/(@= data.values.addon_name @): enabled
+  #@ if data.values.addon_release:
+  releaseFilter:
+    ref:
+      name: #@ data.values.addon_release
+  #@ end
+  crossNamespaceSelection: Allowed
+  stopMatchingBehavior: Delete
+#@ end
+#@ if data.values.addon_repository:
+---
+#! The addon's helm repository, what install/addonrepository.yaml registers by
+#! hand. The VKS addon manager creates the Addon, an AddonRelease per version
+#! and a generated AddonConfigDefinition from it, in vmware-system-vks-public.
+#!
+#! After the AddonRepositoryInstall exists, the webhook allows only
+#! spec.addonFilters to change, so an upgrade may change addon_versions and
+#! nothing else here. package-offerings is required and frozen, so it lists no
+#! versions.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonRepository
+metadata:
+  name: #@ data.values.addon_name + "-repo"
+  namespace: #@ data.values.namespace
+  annotations:
+    #@ offerings = {"repositoryVersion": "1.0.0", "packages": {data.values.addon_name: {"versions": []}}}
+    addons.kubernetes.vmware.com/package-offerings: #@ json.encode(offerings)
+spec:
+  fetch:
+    helmRepository:
+      url: #@ data.values.addon_chart_repository
+  addonFilters:
+  - name: #@ data.values.addon_name
+    versions: #@ data.values.addon_versions
+  targetRepositoryName: #@ data.values.addon_name + "-repo"
+  version: "1.0.0"
+---
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonRepositoryInstall
+metadata:
+  name: #@ data.values.addon_name + "-repo-install"
+  namespace: #@ data.values.namespace
+spec:
+  addonRepositoryRef:
+    name: #@ data.values.addon_name + "-repo"
+    namespace: #@ data.values.namespace
+#@ end

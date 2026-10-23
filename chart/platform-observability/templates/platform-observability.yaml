@@ -4,6 +4,7 @@ releases: the namespace, the two CA secrets, the OAuth client secret and the
 internal token secret. Plus the ConfigMap the aggregator reads its
 per-cluster endpoints from.
 */ -}}
+{{- if .Values.enabled -}}
 {{- $ns := .Values.aggregator.namespaceOverride -}}
 {{- $clusterName := required "clusterName is required" .Values.clusterName -}}
 {{- $ops := .Values.vcfOps -}}
@@ -73,3 +74,4 @@ metadata:
 type: Opaque
 stringData:
   token: {{ $token | quote }}
+{{- end }}

@@ -1,0 +1,8 @@
+carvel-artifacts/
+platform-observability-onboarder.yml
+/onboarder
+# Written by `make release`: the digest of the image it packages.
+config/config-release.yml
+# The pre-release gate's settings, including the Ops and vCenter passwords.
+# .env.example is the committed template.
+.env

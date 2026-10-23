@@ -1,7 +1,10 @@
 # A Supervisor administrator applies this once. The VKS addon manager reads
 # the chart from the helm repository and creates the Addon
-# platform-observability, an AddonRelease for each version in addonFilters, and
-# a generated AddonConfigDefinition with helmValues and helmOptions.
+# platform-observability and an AddonRelease for each version in addonFilters.
+# From 0.2.0 the chart ships its own AddonConfigDefinition (an annotation in
+# Chart.yaml, read by VKS 3.8 and later), which takes the credentials from the
+# onboarder's Secret platform-observability-<cluster>. 0.1.0 gets a generated
+# one with helmValues and helmOptions.
 #
 # After the AddonRepositoryInstall exists, the webhook allows only
 # spec.addonFilters to change. To offer a new chart version, add it to
@@ -23,7 +26,7 @@ spec:
       url: https://warroyo.github.io/platform-observability-addon
   addonFilters:
     - name: platform-observability
-      versions: ["0.1.0"]
+      versions: ["0.1.0", "0.2.0"]
   targetRepositoryName: platform-observability-repo
   version: "1.0.0"
 ---
