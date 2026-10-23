@@ -36,7 +36,10 @@ addon_release: ""
 #! AddonRepositoryInstall), so the service brings the addon with it. Turn off
 #! when the addon is registered some other way (install/addonrepository.yaml).
 addon_repository: true
-addon_chart_repository: https://warroyo.github.io/platform-observability-addon
+#! The chart's OCI repository on GitHub Packages. The URL of a registered
+#! AddonRepository can't change; a new URL needs new object names in
+#! config/deploy.yml (see docs/upgrading.md).
+addon_chart_repository: oci://ghcr.io/warroyo/platform-observability-addon/charts
 #! Chart versions to offer, one AddonRelease each. Keep a version while
 #! clusters still use it.
 #@schema/default ["0.3.1"]

@@ -14,27 +14,27 @@
 apiVersion: addons.kubernetes.vmware.com/v1alpha1
 kind: AddonRepository
 metadata:
-  name: platform-observability-repo
+  name: platform-observability-oci-repo
   namespace: vmware-system-vks-public
   annotations:
     addons.kubernetes.vmware.com/package-offerings: |
-      {"repositoryVersion":"1.0.0","packages":{"platform-observability":{"versions":[]}}}
+      {"repositoryVersion":"2.0.0","packages":{"platform-observability":{"versions":[]}}}
 spec:
   fetch:
     helmRepository:
-      url: https://warroyo.github.io/platform-observability-addon
+      url: oci://ghcr.io/warroyo/platform-observability-addon/charts
   addonFilters:
     - name: platform-observability
       versions: ["0.3.1"]
-  targetRepositoryName: platform-observability-repo
-  version: "1.0.0"
+  targetRepositoryName: platform-observability-oci-repo
+  version: "2.0.0"
 ---
 apiVersion: addons.kubernetes.vmware.com/v1alpha1
 kind: AddonRepositoryInstall
 metadata:
-  name: platform-observability-repo-install
+  name: platform-observability-oci-repo-install
   namespace: vmware-system-vks-public
 spec:
   addonRepositoryRef:
-    name: platform-observability-repo
+    name: platform-observability-oci-repo
     namespace: vmware-system-vks-public
