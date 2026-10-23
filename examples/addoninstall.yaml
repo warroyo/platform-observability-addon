@@ -22,6 +22,6 @@ spec:
           addons.kubernetes.vmware.com/platform-observability: enabled
   releaseFilter:
     ref:
-      name: platform-observability.0.3.0
+      name: platform-observability.0.3.1
   crossNamespaceSelection: Blocked
   stopMatchingBehavior: Delete

@@ -26,7 +26,7 @@ max_concurrent: 4
 #! namespace (crossNamespaceSelection: Allowed). Turn off to attach it per
 #! namespace yourself (examples/addoninstall.yaml).
 addon_install: true
-#! Pin the AddonInstall to one AddonRelease, e.g. platform-observability.0.3.0.
+#! Pin the AddonInstall to one AddonRelease, e.g. platform-observability.0.3.1.
 #! A ClusterAddon does not move to a newer release by itself; set this to
 #! upgrade.
 #! Empty: no releaseFilter.
@@ -39,6 +39,6 @@ addon_repository: true
 addon_chart_repository: https://warroyo.github.io/platform-observability-addon
 #! Chart versions to offer, one AddonRelease each. Keep a version while
 #! clusters still use it.
-#@schema/default ["0.3.0"]
+#@schema/default ["0.3.1"]
 addon_versions:
 - ""

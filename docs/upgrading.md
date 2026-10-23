@@ -4,7 +4,7 @@
 
 1. Add the new version to `addon_versions`, and keep the old one while clusters
    still use it.
-2. Set `addon_release` to the new release, e.g. `platform-observability.0.3.0`.
+2. Set `addon_release` to the new release, e.g. `platform-observability.0.3.1`.
    A ClusterAddon does not move to a newer AddonRelease by itself, even with no
    `releaseFilter`: it stays on the release it was installed with and reports
    `UpgradePending` False.
@@ -15,7 +15,7 @@ The clusters' Secrets are unchanged, so no secret rotates.
 upgrade. Change one with `VALUES_PATCH`, a yq expression:
 
 ```sh
-VALUES_PATCH='.addon_release = "platform-observability.0.3.0"' make install-supervisor-service
+VALUES_PATCH='.addon_release = "platform-observability.0.3.1"' make install-supervisor-service
 ```
 
 Run it from `onboarder/`. See [Development](development.md).

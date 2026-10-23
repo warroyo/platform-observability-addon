@@ -1,7 +1,6 @@
 {{- /*
-What the onboarding dialog's kubectl steps create, before the two helm
-releases: the namespace, the two CA secrets, the OAuth client secret and the
-internal token secret. Plus the ConfigMap the aggregator reads its
+What the collectors need besides the two helm releases: the namespace, the
+two CA secrets, the OAuth client secret and the internal token secret. Plus the ConfigMap the aggregator reads its
 per-cluster endpoints from.
 */ -}}
 {{- if .Values.enabled -}}

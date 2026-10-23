@@ -25,7 +25,7 @@ spec:
       url: https://warroyo.github.io/platform-observability-addon
   addonFilters:
     - name: platform-observability
-      versions: ["0.3.0"]
+      versions: ["0.3.1"]
   targetRepositoryName: platform-observability-repo
   version: "1.0.0"
 ---

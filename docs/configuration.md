@@ -14,10 +14,10 @@ service in vCenter (Workload Management > Services).
 | `sync_period` | `10m` | |
 | `max_concurrent` | `4` | |
 | `addon_install` | `true` | Ship one AddonInstall with `crossNamespaceSelection: Allowed`. |
-| `addon_release` | | Pin the AddonInstall to one AddonRelease, e.g. `platform-observability.0.3.0`. A ClusterAddon does not move to a newer release by itself, so set this to upgrade. |
+| `addon_release` | | Pin the AddonInstall to one AddonRelease, e.g. `platform-observability.0.3.1`. A ClusterAddon does not move to a newer release by itself, so set this to upgrade. |
 | `addon_repository` | `true` | Register the addon's helm repository. |
 | `addon_chart_repository` | `https://warroyo.github.io/platform-observability-addon` | |
-| `addon_versions` | `["0.3.0"]` | Chart versions to offer, one AddonRelease each. The only repository setting an upgrade can change. |
+| `addon_versions` | `["0.3.1"]` | Chart versions to offer, one AddonRelease each. The only repository setting an upgrade can change. |
 
 The service registers the addon itself (an AddonRepository and its
 AddonRepositoryInstall). If the addon is already registered with

@@ -36,8 +36,8 @@ internalToken: ""
 # must share it.
 
 aggregator:
-  # changed: the namespace and names the onboarding dialog gives the
-  # helm releases otel-aggregator and otel-agent in vcf-monitoring.
+  # changed: the namespace and names VCF Operations expects, as helm
+  # releases otel-aggregator and otel-agent in vcf-monitoring.
   namespaceOverride: vcf-monitoring
   fullnameOverride: otel-aggregator-opentelemetry-collector
 
@@ -122,8 +122,7 @@ aggregator:
         secretKeyRef:
           name: otel-internal-auth
           key: token
-    # changed: the three per-cluster values the dialog writes into the
-    # config come from the ConfigMap this chart renders, so this file stays
+    # changed: the three per-cluster values in the config come from the ConfigMap this chart renders, so this file stays
     # the same for every cluster.
     - name: VCF_OPS_CLUSTER_ID
       valueFrom:
