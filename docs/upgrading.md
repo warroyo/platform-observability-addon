@@ -69,3 +69,6 @@ The move from chart 0.1.0 to 0.2.0, which took the credentials from the
 AddonConfig to the Secret, was done on 2026-10-23. Chart 0.3.0 and the matching
 onboarder version no longer support credentials in an AddonConfig. See
 [Decisions](decisions.md).
+
+On 2026-10-23 an end-to-end test passed: uninstall everything, reinstall
+onboarder 0.3.2 from these docs, and onboard two clusters.

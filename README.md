@@ -61,10 +61,15 @@ Prerequisites:
 
    It writes the new user's password to `~/.config/vcf-ops/onboard.password`.
 
+   If the account already exists, skip this step and use the password in that
+   file. Running `create` again needs the admin password. It updates the role
+   and leaves the user's password alone.
+
 2. Install the onboarder service on the Supervisor. Download
    `platform-observability-onboarder.yml` from a release tagged
    `onboarder-v<version>` (or build it, see [Development](docs/development.md)). In vCenter, go to Workload Management > Services >
-   Add, upload the file, and install it with these values:
+   Add, upload the file, and install it with these values (or do the same
+   through the vCenter API, see [Installing](docs/installing.md)):
 
    - `ops_url`: VCF Operations, e.g. `https://ops.example.com`. Required.
    - `ops_password`: the password from step 1. Required.
@@ -86,9 +91,22 @@ Prerequisites:
 The onboarder writes the Secret `platform-observability-lab1-vks-01` in
 `my-namespace`, and the collectors install.
 
+Check it:
+
+```sh
+kubectl -n my-namespace get secret platform-observability-lab1-vks-01
+kubectl -n my-namespace get clusteraddon lab1-vks-01-platform-observability
+kubectl -n vcf-monitoring get pods    # in the guest cluster
+```
+
+The Secret exists within seconds of the label. The ClusterAddon is Ready after
+about 40 s, and the collectors are Running after about 45 s: one agent per node
+plus 2 aggregators (6 pods on a 4-node cluster). For fuller checks, see
+[Verifying an install](docs/installing.md#verifying-an-install). For problems,
+see the [FAQ](docs/faq.md).
+
 To onboard one cluster without the onboarder, see
-[Manual onboarding](docs/manual-onboarding.md). For problems and gotchas, see
-the [FAQ](docs/faq.md).
+[Manual onboarding](docs/manual-onboarding.md).
 
 ## Repo structure
 
@@ -106,6 +124,7 @@ scripts/probe-ingest.sh         sends test OTLP data with one cluster's OAuth cl
 docs/                           see below
 ```
 
+- [docs/installing.md](docs/installing.md): installing the service through the UI or the vCenter API, verifying, uninstalling
 - [docs/architecture.md](docs/architecture.md): components, the credentials
   Secret, RBAC, ownership, onboarder behaviour, scale
 - [docs/configuration.md](docs/configuration.md): onboarder service values

@@ -83,3 +83,8 @@ VCF Operations answers `DELETE configurations/<cluster>` with HTTP 500
 every retry got 500, so the finalizer never came off. Since onboarder 0.3.2, a
 failed DELETE is checked against a fresh `GET configurations`, and a cluster
 Ops no longer lists counts as offboarded.
+
+## How do I remove everything?
+
+Unlabel the clusters first, then uninstall the service, then remove it from the
+catalog. The order matters. See [Uninstall](installing.md#uninstall).

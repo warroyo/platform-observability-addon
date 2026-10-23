@@ -14,7 +14,7 @@ service in vCenter (Workload Management > Services).
 | `sync_period` | `10m` | |
 | `max_concurrent` | `4` | |
 | `addon_install` | `true` | Ship one AddonInstall with `crossNamespaceSelection: Allowed`. |
-| `addon_release` | | Pin the AddonInstall to one AddonRelease, e.g. `platform-observability.0.3.1`. A ClusterAddon does not move to a newer release by itself, so set this to upgrade. |
+| `addon_release` | | Pin the AddonInstall to one AddonRelease, e.g. `platform-observability.0.3.1`. With it empty, a newly matched cluster gets the version offered (`addon_versions`, default `["0.3.1"]`); with one version offered, that is the one used. Which release is chosen when several are offered and none is pinned was not tested. Once installed, a ClusterAddon does not move to a newer release by itself, so set this to upgrade. |
 | `addon_repository` | `true` | Register the addon's helm repository. |
 | `addon_chart_repository` | `oci://ghcr.io/warroyo/platform-observability-addon/charts` | OCI repository the AddonRepository fetches from. The addon manager appends the chart name. VKS 3.8 accepts `oci://`. |
 | `addon_versions` | `["0.3.1"]` | Chart versions to offer, one AddonRelease each. The only repository setting an upgrade can change. |
