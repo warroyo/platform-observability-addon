@@ -1,6 +1,35 @@
 apiVersion: v1
 entries:
   platform-observability:
+  - annotations:
+      addons.kubernetes.vmware.com/addon-config-definition: H4sIAAAAAAACA6VYbW/bNhD+nl9xEAKkKSKl6YphMJYCQYJ1wbYkSIsAwzAMtHSyuUiURlJODcf/fUfqxaJMJXabL5HJe3vu7qF4YiV/QKl4ISbAkqQQKnqspigFalTRIn9iEqO4yE8XZywr5+zs4JGLZAIXRvayECmfXWHKBddk4iBHzRKm2eQAQLAcJ1BmTKeFzMNiqlAu2JRnXC+jd9H76F0jpEoWk2TtK1RLpTEPF48qLKtpxuMDVWJsDKp4jrk1DVCUKC7urh9++NxbBNDLkiwV038x1s1SKUlWao6qFQKYY5bflibi3iJAgiqW3K5PoMZWSWZ+AkEAPUf4lTTvMUOmECSqopIx9ix4/I/FYMWZnKG+6XLgbA7i+ULea/lN0oALG9WsQqUhzipKnYSnOUrsooV4zqSGJ55lMDUaSrMsw2Tgq45cacnFbCuMlFWZnrQPThofWFbheBY/ho4xG9DCqnQptfFF8DuyBUJRdThMWoCJBBZxeluqiRFeArUiQiqL3Op+xlhSQvxNFv7cWPoYvV6ir+Gm7cOSSkt2MKzEoyieRJhyzBITgqxMualBjUu8FmWl75s2aJIQUopp9cZ2f1GqS4kJCs1Zphp3rEe5xVmzWLOqxtMs1QQ6GgG3WkWXNbzICK7XR42aiguDsOuqZjmmZteScaF71QoNkajFC2liNSVjWQ/fbaV9AOs2bLzXMhuTXnRefB3CLSgGnD1g2t91yxw5it5jw7RkJyUxJSaIGL/Ymteteo9pJzCSqhb+BJ437btahXD6Fm6IaZgAT9UJCFwQ3ZgBNkUqEcKnAs6is59ObN+iiZoZaSO3HLAKKIlVTp1xAqoARhxmMoGEJyAKTUQsStvhlDb8Ciw1xOZEk7enEK7XTlSHDaEm56Qe6619nkJUY9/aArNZu2hFgg2rA488dO7O91NEyshw1bd2aMjd8JoQpcQb9EK6QnoHELViPgZsztRvdGS4koHLyRGMvSDOLeu/AxFF0re3bejQ1q7J5r7BHiYbZTIUmNevV45MjbZIP11kMIgzTi6vkwDW69UKDv8xmoqCt1Z6228ax47OM0x//JBgfFxr+3Lid1hn6EWnrciW43bjG5zbdyIdE7/8l4gR565Iz7m78Q3O2+P9BeeuSM+5u/EdyC8vXsFtBDyozfJ3YB512xfw4N3Zbc9uc2oF9W0iqB15NNhsJnFmXom7saW1u9EbOVJ6hju+7qY8gq0skgtBLwt7Q92R270gAld/JOqBky7y/QyNIDDjgnt6tQNE8DIMqxiw16LfaLRNtK14vGkr94Z1quyJEpKFud+801+DRO1kdDyqnfSPvVH5c/0qP14q6BDcTkTr93Tf+tYr0/eCJ4sZycfLzU0gCHYjYkvw3RpioHU8fJ2M1N0JbovObQg72NqnWhS9uRu6zr2s3a4GCjalqS8YuVDtdZsxQbwZpr03tXkb0xNTXwWcEeDVSOpB9ar51ND+1YajJcszurv3DHQ+n0EXf9I2PZiaCQ0foDEbgqpoGFpwVchuIthruqk/GfzByv0HnHr46k04g9nlisvNvOqdTxInF4N7/3YNPXf35otI4Eq/KLmdzvfgqdzYkv3gdF1/kbhDmXNlM2uFWUwTp7orMh73vpuEIKvM/d4QmqJ8kkVlvhH8FQR/O4OW7IZX2ottgXJG3HSlaD6bWgmaa4MT6kyJlF/zVJVJ81QyHc8dvT0818f2a24zruz/p8bV/13mw0KdEwAA
+    apiVersion: v2
+    appVersion: 0.153.0
+    created: "2026-10-23T21:11:13.993547538Z"
+    dependencies:
+    - alias: aggregator
+      condition: enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.158.1
+    - alias: agent
+      condition: enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.158.1
+    description: Ships a VKS cluster's metrics, events and logs to VCF Operations
+      Platform Observability (Extensions > Platform Observability). The same install
+      as the VCF Operations "Onboard VKS Cluster" dialog, as one chart.
+    digest: f7978496011fe9ce52217ee581e93ee80fdbead22357a3720fa1f016357ff003
+    home: https://github.com/warroyo/platform-observability-addon
+    name: platform-observability
+    sources:
+    - https://github.com/warroyo/platform-observability-addon
+    - https://github.com/open-telemetry/opentelemetry-helm-charts
+    type: application
+    urls:
+    - https://github.com/warroyo/platform-observability-addon/releases/download/platform-observability-0.2.0/platform-observability-0.2.0.tgz
+    version: 0.2.0
   - apiVersion: v2
     appVersion: 0.153.0
     created: "2026-10-21T20:38:01.607745554Z"
@@ -26,4 +55,4 @@ entries:
     urls:
     - https://github.com/warroyo/platform-observability-addon/releases/download/platform-observability-0.1.0/platform-observability-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-21T20:38:01.607753686Z"
+generated: "2026-10-23T21:11:13.993563199Z"
