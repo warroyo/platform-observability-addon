@@ -28,6 +28,8 @@
 # Optional:
 #   VC_CLUSTER        cluster id (e.g. domain-c9). Auto-discovered if there
 #                     is exactly one.
+#   VALUES_PATCH      a yq expression applied to the values last, e.g.
+#                     '.legacy_addon_config = true'.
 #   SERVICE_VALUES    path to the package values YAML to install with.
 #                     Defaults to config/values.yml with `namespace`
 #                     stripped - the Supervisor fills that in itself.
@@ -200,6 +202,13 @@ elif [[ "$INSTALLED" == "200" && "${RESET_VALUES:-false}" != true ]]; then
 else
   repo_defaults > "$WORK_DIR/values.yml"
   log "using repo defaults and .env ($([[ "$INSTALLED" == "200" ]] && echo RESET_VALUES || echo first install))"
+fi
+if [[ -n "${VALUES_PATCH:-}" ]]; then
+  # A yq expression on top of whichever values were chosen above, e.g.
+  #   VALUES_PATCH='.legacy_addon_config = true'
+  command -v yq >/dev/null 2>&1 || fail "yq is needed for VALUES_PATCH"
+  yq -i "$VALUES_PATCH" "$WORK_DIR/values.yml"
+  log "applied VALUES_PATCH: $VALUES_PATCH"
 fi
 log "values (password redacted):"
 sed -E 's/^(ops_password:).*/\1 <redacted>/; s/^/         /' "$WORK_DIR/values.yml"
