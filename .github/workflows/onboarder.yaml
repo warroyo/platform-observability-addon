@@ -1,0 +1,64 @@
+# The onboarder Supervisor Service. Every push and PR that touches onboarder/
+# runs the tests. A tag onboarder-v<version> also builds and pushes the image
+# and the bundle, and attaches platform-observability-onboarder.yml (what
+# vCenter takes under Workload Management > Services > Add) to a GitHub
+# release.
+name: onboarder
+
+on:
+  push:
+    branches: [main]
+    # The tests also render the chart and its AddonConfigDefinition.
+    paths: ["onboarder/**", "chart/**", ".github/workflows/onboarder.yaml"]
+    tags: ["onboarder-v*"]
+  pull_request:
+    paths: ["onboarder/**", "chart/**", ".github/workflows/onboarder.yaml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: onboarder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: onboarder/go.mod
+      # acd_test.go runs helm template on what the ACD renders.
+      - uses: azure/setup-helm@v4
+      - run: make test
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/onboarder-v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    defaults:
+      run:
+        working-directory: onboarder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Carvel tools
+        run: curl -L https://carvel.dev/install.sh | sudo bash
+      - name: Build, push and package
+        run: |
+          v="${GITHUB_REF_NAME#onboarder-v}"
+          make build VERSION="$v"
+          make push VERSION="$v"
+          make release VERSION="$v"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: onboarder/platform-observability-onboarder.yml
+          generate_release_notes: true
