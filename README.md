@@ -1,13 +1,11 @@
 # platform-observability addon
 
-Onboards a VKS cluster to VCF Operations Platform Observability (Extensions >
-Platform Observability > Platform Services) as a VKS helm addon, not through
-the "Onboard VKS Cluster" dialog.
+Automates onboarding VKS clusters to VCF Operations Platform Observability
+(Extensions > Platform Observability > Platform Services). Label a cluster,
+and it is onboarded: its OAuth client is created in VCF Operations, and its
+collectors are installed as a VKS helm addon and kept connected.
 
-The dialog hands out a list of commands: two CA certificates, an OAuth
-client, a random token, and two helm installs of the OpenTelemetry collector
-with values files to download. All of that is per cluster and copied by hand.
-Here it is one chart and a Supervisor Service, the onboarder, that gets each
+It is one chart and a Supervisor Service, the onboarder, that gets each
 labelled cluster's values from the VCF Operations API and keeps them in a
 Secret in the cluster's Supervisor namespace. A script does the same for one
 cluster by hand.
@@ -15,8 +13,8 @@ cluster by hand.
 ## What is in it
 
 - `chart/platform-observability`: an umbrella chart. It creates the
-  `vcf-monitoring` namespace (Pod Security `privileged`), the four secrets the
-  dialog creates, and both collector releases. The collectors are the
+  `vcf-monitoring` namespace (Pod Security `privileged`), the CA, OAuth and
+  internal token secrets, and both collector releases. The collectors are the
   upstream `opentelemetry-collector` chart 0.158.1, twice, as `aggregator`
   and `agent`, with the VCF Operations values files. The only changes to
   those values are marked `changed:`. The aggregator reads the cluster ID and
@@ -161,10 +159,8 @@ Two API details `ops-account.sh` handles: a user created through
 
 ## The VCF Operations API
 
-The dialog calls
-`/vcf-operations/rest/ops/internal/extension/vodap/app0/configurations?clusterName=<cluster>`,
-which wants a browser session. The same API is at
-`/suite-api/internal/extension/vodap/app0/configurations` and takes an
+Onboarding uses `/suite-api/internal/extension/vodap/app0/configurations`,
+which takes an
 `OpsToken` from `/suite-api/api/auth/token/acquire` with the
 `X-vRealizeOps-API-use-unsupported: true` header. It is an internal API and
 can change in another release.
@@ -181,11 +177,11 @@ The method decides what it does.
 | `vmspPlatformCertificate` | `otel-gateway-oauth-tls-ca`, PEM |
 | `saClientId` | `otel-gateway-oauth-creds` client ID |
 
-`POST` (empty body) is what the dialog sends when a cluster name is entered.
-It creates the cluster's OAuth client if needed, issues the client a new
-secret, and returns the dialog's `values-aggregator.yaml`, `values-agent.yaml`
-and `commands`. Step 5 of `commands` holds the new secret. `onboard.sh` sends
-the POST, takes the secret from step 5, and uses the GET for the rest.
+`POST` (empty body, `?clusterName=<cluster>`) creates the cluster's OAuth
+client if needed, issues the client a new secret, and returns install
+`commands`. Step 5 of `commands` holds the new secret. The onboarder and
+`onboard.sh` send the POST, take the secret from step 5, and use the GET for
+the rest.
 
 `DELETE /suite-api/internal/extension/vodap/app0/configurations/<cluster>`
 offboards a cluster: it removes the cluster from the list and deletes its
@@ -204,19 +200,14 @@ answers 400.
 
 A cluster keeps the same OAuth client (`svc-vodap-app0-<cluster>` in the VSP
 identity service), but there is no way to read its secret, only to issue a
-new one, and a new one revokes the old one at once. Opening the onboarding
-dialog for a cluster issues a new one, and that cluster's aggregators then
-get 401s until they have it.
+new one, and a new one revokes the old one at once. The cluster's aggregators
+then get 401s until they have it.
 
-**Do not open the "Onboard VKS Cluster" dialog for a cluster this addon
-manages.** Entering the cluster's name there is the same `POST
-configurations` that `onboard.sh` sends: it revokes the cluster's
-current secret at once, and nothing tells the addon. Rotate a cluster's secret
-with the `platform-observability/rotate` annotation (see the onboarder) or
-`onboard.sh` instead, and offboard it with `DELETE
-configurations/<cluster>`, not from the dialog. If the dialog was opened
-anyway, the sign is 401s in the aggregator logs; annotate the cluster to
-rotate, or run `onboard.sh` for that cluster and apply its output.
+**Don't onboard a cluster this addon manages from the VCF Operations UI.**
+That issues a new secret, and nothing tells the addon. Rotate with the
+`platform-observability/rotate` annotation (see the onboarder) instead. If it
+happened anyway, the sign is 401s in the aggregator logs; annotate the cluster
+to rotate.
 
 `--check` below is for a person looking into a cluster. It logs in to VSP as
 `admin@vsp.local`, so automation should not depend on it: the onboarding
