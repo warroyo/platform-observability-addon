@@ -280,7 +280,8 @@ for _ in $(seq 1 60); do
   [[ "$STATUS" == "CONFIGURED" && "$CURRENT" == "$PKG_VERSION" ]] && break
   sleep 5
 done
-[[ "$STATUS" == "CONFIGURED" ]] || fail "config_status is '$STATUS' after 5 minutes, wanted CONFIGURED"
+[[ "$STATUS" == "CONFIGURED" && "$CURRENT" == "$PKG_VERSION" ]] \
+  || fail "vCenter reports '$STATUS' at '$CURRENT' after 5 minutes, wanted CONFIGURED at $PKG_VERSION"
 log "vCenter reports CONFIGURED at $CURRENT"
 
 # --- the workload has NOT necessarily rolled yet ----------------------

@@ -9,11 +9,11 @@
 #   1. The Deployment runs EXPECT_IMAGE (the digest in the registry for
 #      DEV_VERSION), is available, and has won leader election.
 #   2. ADOPT_CLUSTER, already onboarded, is adopted: the onboarder's field
-#      manager owns its AddonConfig keys, the Cluster has the finalizer, the
-#      secret is the one it had before, and no secret was issued.
-#   3. Only with ONBOARD_CLUSTER: label it, wait for onboarding (AddonConfig
-#      secret, finalizer, Onboarded event, the cluster listed in Ops), then
-#      unlabel it and wait for offboarding (credentials gone, finalizer gone,
+#      manager has applied its credentials Secret, the Cluster has the
+#      finalizer, the secret is the one it had before, and no secret was issued.
+#   3. Only with ONBOARD_CLUSTER: label it, wait for onboarding (credentials
+#      Secret, finalizer, Onboarded event, the cluster listed in Ops), then
+#      unlabel it and wait for offboarding (Secret deleted, finalizer gone,
 #      the cluster gone from Ops). It leaves the cluster as it found it.
 #   4. The onboarder logged no errors.
 set -euo pipefail
@@ -55,11 +55,13 @@ ops_clusters() {
     -H 'X-vRealizeOps-API-use-unsupported: true' | jq -r '.[].clusterName'
 }
 
-ac_get()    { kubectl -n "$1" get addonconfig "$2-$ADDON" -o json --show-managed-fields 2>/dev/null; }
-secret_of() { ac_get "$1" "$2" | jq -r '.spec.values.helmValues.vcfOps.clientSecret // empty'; }
+# The credentials Secret, platform-observability-<cluster>. secret_of returns
+# clientSecret still base64-encoded: compared, never printed.
+cred_get()  { kubectl -n "$1" get secret "$ADDON-$2" -o json --show-managed-fields 2>/dev/null; }
+secret_of() { cred_get "$1" "$2" | jq -r '.data.clientSecret // empty'; }
 has_fin()   { kubectl -n "$1" get cluster.cluster.x-k8s.io "$2" -o json | jq -e '.metadata.finalizers // [] | index("platform-observability/offboard")'; }
 no_fin()    { ! has_fin "$1" "$2"; }
-owned()     { ac_get "$1" "$2" | jq -e --arg fm "$FM" '[.metadata.managedFields[] | select(.manager == $fm and .operation == "Apply")] | length > 0'; }
+owned()     { cred_get "$1" "$2" | jq -e --arg fm "$FM" '[.metadata.managedFields[] | select(.manager == $fm and .operation == "Apply")] | length > 0'; }
 in_ops()    { ops_clusters | grep -qx "$1"; }
 not_in_ops(){ ! in_ops "$1"; }
 event()     { kubectl -n "$1" get events --field-selector "involvedObject.name=$2,reason=$3" -o name | grep -q .; }
@@ -77,14 +79,14 @@ pass "won leader election (the service's Role covers leases)"
 # --- 2. adoption -----------------------------------------------------------
 ANS="${ADOPT_CLUSTER%%/*}"; ACL="${ADOPT_CLUSTER##*/}"
 before="$(secret_of "$ANS" "$ACL")"
-[[ -n "$before" ]] || fail "$ADOPT_CLUSTER has no secret in its AddonConfig; it must be onboarded already"
-wait_for "$ADOPT_CLUSTER AddonConfig owned by $FM" owned "$ANS" "$ACL"
+[[ -n "$before" ]] || fail "$ADOPT_CLUSTER has no Secret $ADDON-$ACL; it must be onboarded already"
+wait_for "$ADOPT_CLUSTER Secret applied by $FM" owned "$ANS" "$ACL"
 wait_for "$ADOPT_CLUSTER finalizer" has_fin "$ANS" "$ACL"
 [[ "$(secret_of "$ANS" "$ACL")" == "$before" ]] || fail "$ADOPT_CLUSTER secret changed: adoption issued a new one"
 if event "$ANS" "$ACL" Onboarded || event "$ANS" "$ACL" SecretRotated; then
   fail "$ADOPT_CLUSTER got an Onboarded/SecretRotated event: a secret was issued during adoption"
 fi
-pass "$ADOPT_CLUSTER adopted: keys owned by $FM, finalizer set, same secret, nothing issued"
+pass "$ADOPT_CLUSTER adopted: Secret applied by $FM, finalizer set, same secret, nothing issued"
 
 # --- 3. onboard and offboard ---------------------------------------------
 if [[ -n "${ONBOARD_CLUSTER:-}" ]]; then
@@ -92,7 +94,6 @@ if [[ -n "${ONBOARD_CLUSTER:-}" ]]; then
   label="addons.kubernetes.vmware.com/$ADDON"
   [[ -z "$(kubectl -n "$ONS" get cluster.cluster.x-k8s.io "$OCL" -o jsonpath="{.metadata.labels.addons\.kubernetes\.vmware\.com/$ADDON}")" ]] \
     || fail "$ONBOARD_CLUSTER is already labelled; pick an unlabelled cluster"
-  had_ac=false; ac_get "$ONS" "$OCL" >/dev/null && had_ac=true
   cleanup() {
     kubectl -n "$ONS" label cluster.cluster.x-k8s.io "$OCL" "$label-" >/dev/null 2>&1 || true
   }
@@ -100,7 +101,7 @@ if [[ -n "${ONBOARD_CLUSTER:-}" ]]; then
 
   log "labelling $ONBOARD_CLUSTER"
   kubectl -n "$ONS" label cluster.cluster.x-k8s.io "$OCL" "$label=enabled" >/dev/null
-  wait_for "$ONBOARD_CLUSTER secret" bash -c "[[ -n \"\$(kubectl -n '$ONS' get addonconfig '$OCL-$ADDON' -o jsonpath='{.spec.values.helmValues.vcfOps.clientSecret}' 2>/dev/null)\" ]]"
+  wait_for "$ONBOARD_CLUSTER secret" bash -c "[[ -n \"\$(kubectl -n '$ONS' get secret '$ADDON-$OCL' -o jsonpath='{.data.clientSecret}' 2>/dev/null)\" ]]"
   wait_for "$ONBOARD_CLUSTER finalizer" has_fin "$ONS" "$OCL"
   wait_for "$ONBOARD_CLUSTER Onboarded event" event "$ONS" "$OCL" Onboarded
   wait_for "$OCL listed in Ops" in_ops "$OCL"
@@ -109,13 +110,9 @@ if [[ -n "${ONBOARD_CLUSTER:-}" ]]; then
   log "unlabelling $ONBOARD_CLUSTER"
   kubectl -n "$ONS" label cluster.cluster.x-k8s.io "$OCL" "$label-" >/dev/null
   wait_for "$ONBOARD_CLUSTER finalizer removed" no_fin "$ONS" "$OCL"
-  [[ -z "$(secret_of "$ONS" "$OCL")" ]] || fail "$ONBOARD_CLUSTER still has a secret after offboarding"
+  ! cred_get "$ONS" "$OCL" >/dev/null || fail "$ONBOARD_CLUSTER still has Secret $ADDON-$OCL after offboarding"
   wait_for "$OCL gone from Ops" not_in_ops "$OCL"
-  pass "$ONBOARD_CLUSTER offboarded: secret removed, finalizer removed, gone from Ops"
-  # Without an AddonInstall owning it, the emptied AddonConfig is an orphan.
-  if [[ "$had_ac" == false ]] && ac_get "$ONS" "$OCL" >/dev/null; then
-    kubectl -n "$ONS" delete addonconfig "$OCL-$ADDON" --wait=false >/dev/null
-  fi
+  pass "$ONBOARD_CLUSTER offboarded: Secret deleted, finalizer removed, gone from Ops"
   trap - EXIT
 fi
 
